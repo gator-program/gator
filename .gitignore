@@ -1,0 +1,12 @@
+build
+*.inp
+*.out
+*.log
+*.pyc
+*~
+__pycache__
+venv*
+htmlcov
+.coverage
+*.egg-info
+*.dist
