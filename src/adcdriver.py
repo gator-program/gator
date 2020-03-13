@@ -88,15 +88,16 @@ class AdcDriver:
             self.print_header()
 
             # redirect stdout to string
-            with io.StringIO() as buf, redirect_stdout(buf):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
                 adc_drv = run_adc(scf_drv,
                                   method=self.adc_method,
                                   core_orbitals=self.adc_core_orbitals,
                                   n_states=self.adc_states,
                                   n_singlets=self.adc_singlets,
                                   conv_tol=self.adc_tol)
-                for line in buf.getvalue().split(os.linesep):
-                    self.ostream.print_header(line.ljust(width))
+            for line in buf.getvalue().split(os.linesep):
+                self.ostream.print_header(line.ljust(width))
 
             self.ostream.print_header('End of ADC calculation.'.ljust(width))
             for line in adc_drv.describe().split(os.linesep):
