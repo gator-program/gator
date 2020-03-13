@@ -7,7 +7,7 @@ from veloxchem import mpi_master
 import sys
 
 
-class InputReader:
+class GatorTask:
 
     def __init__(self,
                  input_fname,
@@ -15,6 +15,7 @@ class InputReader:
                  comm=MPI.COMM_WORLD):
 
         self.comm = comm
+        self.rank = comm.Get_rank()
 
         if self.comm.Get_rank() == mpi_master():
             self.input_dict = InputParser(input_fname).get_dict()
@@ -27,12 +28,6 @@ class InputReader:
         else:
             self.ostream = OutputStream()
 
-        self.print_gator_header()
-        self.ostream.print_info('Reading input file: {}'.format(input_fname))
-        self.ostream.print_blank()
-
-    def print_gator_header(self):
-
         self.ostream.print_separator()
         self.ostream.print_title('')
         self.ostream.print_title('GATOR 0.0')
@@ -42,22 +37,14 @@ class InputReader:
         self.ostream.print_separator()
         self.ostream.print_blank()
 
-    def get_input_dict(self):
-
-        return self.input_dict
-
-    def get_output_stream(self):
-
-        return self.ostream
-
-    def get_molecule(self, input_dict):
+        self.ostream.print_info('Reading input file: {}'.format(input_fname))
+        self.ostream.print_blank()
 
         if self.comm.Get_rank() == mpi_master():
-            return Molecule.from_dict(self.input_dict['molecule'])
+            self.molecule = Molecule.from_dict(self.input_dict['molecule'])
+            self.ostream.print_block(self.molecule.get_string())
         else:
-            return Molecule()
-
-    def get_basis(self, input_dict, molecule, ostream):
+            self.molecule = Molecule()
 
         if self.comm.Get_rank() == mpi_master():
             if 'basis_path' in self.input_dict['method_settings']:
@@ -65,18 +52,16 @@ class InputReader:
             else:
                 basis_path = '.'
             basis_name = self.input_dict['method_settings']['basis'].upper()
-            return MolecularBasis.read(molecule, basis_name, basis_path,
-                                       ostream)
+            self.ao_basis = MolecularBasis.read(self.molecule, basis_name,
+                                                basis_path, self.ostream)
+            self.min_basis = MolecularBasis.read(self.molecule, 'MIN-CC-PVDZ',
+                                                 basis_path)
+            self.ostream.print_block(
+                self.ao_basis.get_string("Atomic Basis", self.molecule))
         else:
-            return MolecularBasis()
+            self.ao_basis = MolecularBasis()
+            self.min_basis = MolecularBasis()
 
-    def get_min_basis(self, input_dict, molecule):
-
-        if self.comm.Get_rank() == mpi_master():
-            if 'basis_path' in input_dict['method_settings']:
-                basis_path = input_dict['method_settings']['basis_path']
-            else:
-                basis_path = '.'
-            return MolecularBasis.read(molecule, 'MIN-CC-PVDZ', basis_path)
-        else:
-            return MolecularBasis()
+        self.molecule.broadcast(self.rank, self.comm)
+        self.ao_basis.broadcast(self.rank, self.comm)
+        self.min_basis.broadcast(self.rank, self.comm)

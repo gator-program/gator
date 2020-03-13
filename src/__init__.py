@@ -5,7 +5,7 @@ except ImportError:
     raise ImportError('Unable to import mpi4py.MPI')
 
 # Python classes
-from .ioutils import InputReader
+from .gatortask import GatorTask
 from .scfdriver import ScfRestrictedDriver
 from .mp2driver import Mp2Driver
 
