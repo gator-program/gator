@@ -21,7 +21,8 @@ class GatorTask:
             self.input_dict = InputParser(input_fname).get_dict()
         else:
             self.input_dict = {}
-        self.input_dict = self.mpi_comm.bcast(self.input_dict, root=mpi_master())
+        self.input_dict = self.mpi_comm.bcast(self.input_dict,
+                                              root=mpi_master())
 
         if self.mpi_comm.Get_rank() == mpi_master():
             self.ostream = OutputStream(output_fname)
