@@ -28,7 +28,6 @@ def main():
     if 'scf' in input_dict:
         scf_drv.update_settings(input_dict['scf'])
     scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
-    scf_drv.task = task
 
     task_type = None
     if 'jobs' in input_dict and 'task' in input_dict['jobs']:

@@ -8,6 +8,7 @@ except ImportError:
 from .gatortask import GatorTask
 from .scfdriver import ScfRestrictedDriver
 from .mp2driver import Mp2Driver
+from .adcdriver import AdcDriver
 
 # Python functions
 from .mpiutils import mpi_sanity_check
