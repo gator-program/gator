@@ -3,7 +3,6 @@ from veloxchem import OutputStream
 from veloxchem import Molecule
 from veloxchem import MolecularBasis
 from veloxchem import mpi_master
-import sys
 
 
 class GatorTask:
