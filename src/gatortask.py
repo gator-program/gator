@@ -14,16 +14,16 @@ class GatorTask:
                  output_fname=sys.stdout,
                  comm=MPI.COMM_WORLD):
 
-        self.comm = comm
-        self.rank = comm.Get_rank()
+        self.mpi_comm = comm
+        self.mpi_rank = comm.Get_rank()
 
-        if self.comm.Get_rank() == mpi_master():
+        if self.mpi_comm.Get_rank() == mpi_master():
             self.input_dict = InputParser(input_fname).get_dict()
         else:
             self.input_dict = {}
-        self.input_dict = self.comm.bcast(self.input_dict, root=mpi_master())
+        self.input_dict = self.mpi_comm.bcast(self.input_dict, root=mpi_master())
 
-        if self.comm.Get_rank() == mpi_master():
+        if self.mpi_comm.Get_rank() == mpi_master():
             self.ostream = OutputStream(output_fname)
         else:
             self.ostream = OutputStream()
@@ -40,13 +40,13 @@ class GatorTask:
         self.ostream.print_info('Reading input file: {}'.format(input_fname))
         self.ostream.print_blank()
 
-        if self.comm.Get_rank() == mpi_master():
+        if self.mpi_comm.Get_rank() == mpi_master():
             self.molecule = Molecule.from_dict(self.input_dict['molecule'])
             self.ostream.print_block(self.molecule.get_string())
         else:
             self.molecule = Molecule()
 
-        if self.comm.Get_rank() == mpi_master():
+        if self.mpi_comm.Get_rank() == mpi_master():
             if 'basis_path' in self.input_dict['method_settings']:
                 basis_path = self.input_dict['method_settings']['basis_path']
             else:
@@ -62,6 +62,6 @@ class GatorTask:
             self.ao_basis = MolecularBasis()
             self.min_basis = MolecularBasis()
 
-        self.molecule.broadcast(self.rank, self.comm)
-        self.ao_basis.broadcast(self.rank, self.comm)
-        self.min_basis.broadcast(self.rank, self.comm)
+        self.molecule.broadcast(self.mpi_rank, self.mpi_comm)
+        self.ao_basis.broadcast(self.mpi_rank, self.mpi_comm)
+        self.min_basis.broadcast(self.mpi_rank, self.mpi_comm)
