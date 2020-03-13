@@ -40,7 +40,7 @@ class AdcDriver:
         # output stream
         self.ostream = ostream
 
-        # ADC settings
+        # default ADC settings
         self.adc_tol = 1e-4
         self.adc_method = 'adc2'
         self.adc_states = 3

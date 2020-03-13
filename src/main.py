@@ -11,7 +11,6 @@ from .adcdriver import AdcDriver
 def main():
 
     mpi_sanity_check(sys.argv)
-
     comm = MPI.COMM_WORLD
 
     input_fname = sys.argv[1]
@@ -20,18 +19,18 @@ def main():
         output_fname = sys.argv[2]
 
     task = GatorTask(input_fname, output_fname, comm)
-
     input_dict = task.input_dict
     ostream = task.ostream
-
-    scf_drv = ScfRestrictedDriver(comm, ostream)
-    if 'scf' in input_dict:
-        scf_drv.update_settings(input_dict['scf'])
-    scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
 
     task_type = None
     if 'jobs' in input_dict and 'task' in input_dict['jobs']:
         task_type = input_dict['jobs']['task'].lower()
+
+    if task_type in ['scf', 'mp2', 'adc']:
+        scf_drv = ScfRestrictedDriver(comm, ostream)
+        if 'scf' in input_dict:
+            scf_drv.update_settings(input_dict['scf'])
+        scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
 
     if task_type == 'mp2':
         mp2_drv = Mp2Driver(comm, ostream)
