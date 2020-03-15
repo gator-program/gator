@@ -1,6 +1,7 @@
 from adcc import run_adc
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
+import sys
 
 
 class AdcDriver:
@@ -128,7 +129,8 @@ class AdcDriver:
             self.ostream.print_info('Running ADC calculation...')
             self.ostream.print_blank()
 
-            # note: run_adc writes to sys.stdout
+            original_stdout = sys.stdout
+            sys.stdout = self.ostream.stream
             adc_drv = run_adc(scf_drv,
                               method=self.adc_method,
                               core_orbitals=self.adc_core_orbitals,
@@ -139,11 +141,11 @@ class AdcDriver:
                               frozen_core=self.adc_frozen_core,
                               frozen_virtual=self.adc_frozen_virtual,
                               conv_tol=self.adc_tol)
+            sys.stdout = original_stdout
 
             self.ostream.print_info('ADC calculation completed.')
             self.ostream.print_blank()
 
-            # print the excited states
             self.print_excited_states(adc_drv)
 
     def print_header(self):
