@@ -160,7 +160,7 @@ class AdcOneDriver:
 
         for iteration in range(self.max_iter):
 
-            sigma_mat = np.zeros((nocc * nvir, self.nstates))
+            sigma_mat = np.zeros(trial_mat.shape)
 
             for vecind in range(trial_mat.shape[1]):
                 cjb = trial_mat[:nocc * nvir, vecind].reshape(nocc, nvir)
