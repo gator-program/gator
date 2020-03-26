@@ -151,7 +151,14 @@ class MOIntegralsDriver:
 
         num_batches = local_comm.bcast(num_batches, root=mpi_master())
 
+        valstr = 'Processing Fock builds for the OO block... '
+        self.ostream.print_info(valstr)
+
         for batch_ind in range(num_batches):
+
+            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+            self.ostream.print_info(valstr)
+            self.ostream.flush()
 
             if local_master:
                 batch_start = mo_ints_start + batch_ind * self.batch_size
@@ -202,6 +209,7 @@ class MOIntegralsDriver:
                     ooov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
 
+        self.ostream.print_blank()
         valstr = 'Integrals transformation for the OO block done in '
         valstr += '{:.2f} sec.'.format(tm.time() - start_time)
         self.ostream.print_info(valstr)
@@ -233,7 +241,14 @@ class MOIntegralsDriver:
 
         num_batches = local_comm.bcast(num_batches, root=mpi_master())
 
+        valstr = 'Processing Fock builds for the VV block... '
+        self.ostream.print_info(valstr)
+
         for batch_ind in range(num_batches):
+
+            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+            self.ostream.print_info(valstr)
+            self.ostream.flush()
 
             if local_master:
                 batch_start = mo_ints_start + batch_ind * self.batch_size
@@ -269,6 +284,7 @@ class MOIntegralsDriver:
                     vvov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
 
+        self.ostream.print_blank()
         valstr = 'Integrals transformation for the VV block done in '
         valstr += '{:.2f} sec.'.format(tm.time() - start_time)
         self.ostream.print_info(valstr)
