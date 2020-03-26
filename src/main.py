@@ -7,6 +7,7 @@ from .scfdriver import ScfRestrictedDriver
 from .mp2driver import Mp2Driver
 from .adcdriver import AdcDriver
 from .adconedriver import AdcOneDriver
+from .adctwodriver import AdcTwoDriver
 
 
 def main():
@@ -27,7 +28,7 @@ def main():
     if 'jobs' in input_dict and 'task' in input_dict['jobs']:
         task_type = input_dict['jobs']['task'].lower()
 
-    if task_type in ['scf', 'mp2', 'adc', 'adc1']:
+    if task_type in ['scf', 'mp2', 'adc', 'adc1', 'adc2']:
         scf_drv = ScfRestrictedDriver(comm, ostream)
         if 'scf' in input_dict:
             scf_drv.update_settings(input_dict['scf'])
@@ -49,6 +50,12 @@ def main():
         adc_drv = AdcOneDriver(comm, ostream)
         if 'adc1' in input_dict:
             adc_drv.update_settings(input_dict['adc1'])
+        adc_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
+
+    if task_type == 'adc2':
+        adc_drv = AdcTwoDriver(comm, ostream)
+        if 'adc2' in input_dict:
+            adc_drv.update_settings(input_dict['adc2'])
         adc_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
 
 
