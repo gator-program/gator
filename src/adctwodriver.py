@@ -1,6 +1,7 @@
 from mpi4py import MPI
 from veloxchem import ExcitationVector
 from veloxchem import mpi_master
+from veloxchem import hartree_in_ev
 from veloxchem.veloxchemlib import szblock
 from veloxchem import molorb
 from veloxchem import get_qq_type
@@ -172,6 +173,9 @@ class AdcTwoDriver:
         moints_drv = MOIntsDriver(self.comm, self.ostream)
         moints_blocks = moints_drv.compute(molecule, basis, scf_tensors)
 
+        # precompute ab and ij matrices for 2nd-order contribution
+        # (terms A and B)
+
         # [ +2<kl|ac> -1<kl|ca> ] <kl|bc>
         m2_ab = np.zeros((nvir, nvir))
         for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
@@ -187,27 +191,12 @@ class AdcTwoDriver:
             local_ij = moints_blocks['vvoo'][ind, :].reshape(nocc, nocc)
             m2_ij += np.matmul(local_ij / eabij, 2.0 * local_ij.T - local_ij)
             m2_ij += np.matmul(local_ij, (2.0 * local_ij.T - local_ij) / eabij)
-        """
-        # <OO|VV> to <VV|OO>
-        ave, res = divmod(nvir * nvir, self.nodes)
-        count = [ave + 1 if i < res else ave for i in range(self.nodes)]
-        displ = [sum(count[:i]) for i in range(self.nodes)]
-        local_oovv = moints_blocks['oovv']
-        local_ij = [
-            local_oovv[:, displ[p]:displ[p] + count[p]]
-            for p in range(self.nodes)
-        ]
-        local_vvoo = np.zeros((count[self.rank], 0))
-        for rank in range(self.nodes):
-            local_ab = self.comm.scatter(local_ij, root=rank)
-            local_vvoo = np.hstack((local_vvoo, local_ab.T))
-        """
 
         # start iterations
 
         for iteration in range(self.max_iter):
 
-            # precompute kc vectors for 2nd order contribution (term C)
+            # precompute kc vectors for 2nd-order contribution (term C)
 
             kc = np.zeros((trial_mat.shape[1], 2, nocc, nvir))
 
@@ -219,14 +208,12 @@ class AdcTwoDriver:
                 for ind, (k, j) in enumerate(moints_blocks['oo_indices']):
                     de = eab - eocc[k] - eocc[j]
                     vv = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+                    # [ +2<kj|cb> - <kj|bc> ] R_jb
                     # 'kjcb,jb->kc'
-                    cb = vv
-                    kc1[k, :] += 2.0 * (np.matmul(cb, rjb.T))[:, j]
-                    kc2[k, :] += 2.0 * (np.matmul(cb / de, rjb.T))[:, j]
                     # 'kjbc,jb->kc'
-                    bc = vv
-                    kc1[k, :] -= (np.matmul(bc.T, rjb.T))[:, j]
-                    kc2[k, :] -= (np.matmul(bc.T / de, rjb.T))[:, j]
+                    cb_bc = 2.0 * vv - vv.T
+                    kc1[k, :] += (np.matmul(cb_bc, rjb.T))[:, j]
+                    kc2[k, :] += (np.matmul(cb_bc / de, rjb.T))[:, j]
 
             kc = self.comm.allreduce(kc, op=MPI.SUM)
 
@@ -236,34 +223,32 @@ class AdcTwoDriver:
 
             for vecind in range(trial_mat.shape[1]):
                 rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+                sigma = np.zeros(rjb.shape)
 
-                # 0th order contribution
-                # TODO: use orbital energies
+                # 0th-order contribution
 
                 if self.rank == mpi_master():
-                    mat = np.matmul(rjb, fab.T) - np.matmul(fij, rjb)
-                else:
-                    mat = np.zeros((nocc, nvir))
+                    sigma += np.matmul(rjb, fab.T) - np.matmul(fij, rjb)
 
-                # 1st order contribution
+                # 1st-order contribution
 
                 for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
                     # 'ijab,jb->ia'
                     ab = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
-                    mat[i, :] += 2.0 * (np.matmul(ab, rjb.T))[:, j]
                     # 'ibja,jb->ia'
                     ba = moints_blocks['ovov'][ind, :].reshape(nvir, nvir)
-                    mat[i, :] -= (np.matmul(ba.T, rjb.T))[:, j]
+                    ab_ba = 2.0 * ab - ba.T
+                    sigma[i, :] += (np.matmul(ab_ba, rjb.T))[:, j]
 
-                # 2nd order contributions
+                # 2nd-order contributions
 
                 # A: 0.5 [ +2<kl|ac> -1<kl|ca> ] <kl|bc> R_jb
 
-                mat += 0.5 * np.matmul(rjb, m2_ab.T)
+                sigma += 0.5 * np.matmul(rjb, m2_ab.T)
 
                 # B: 0.5 [ +2<cd|ik> -1<cd|ki> ] <cd|jk> R_jb
 
-                mat += 0.5 * np.matmul(m2_ij, rjb)
+                sigma += 0.5 * np.matmul(m2_ij, rjb)
 
                 # C: -0.5 [ +2<ac|ik> -1<ac|ki> ] [ +2<jk|bc> - <jk|cb> ] R_jb
 
@@ -273,16 +258,14 @@ class AdcTwoDriver:
                 for ind, (i, k) in enumerate(moints_blocks['oo_indices']):
                     de = eab - eocc[i] - eocc[k]
                     vv = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+                    # -0.5 [ +2<ac|ik> -1<ac|ki> ] R_kc
                     # 'ikac,kc->ia'
-                    ac = vv
-                    mat[i, :] -= (np.matmul(ac / de, kc1.T))[:, k]
-                    mat[i, :] -= (np.matmul(ac, kc2.T))[:, k]
                     # 'ikca,kc->ia'
-                    ca = vv
-                    mat[i, :] += 0.5 * (np.matmul(ca.T / de, kc1.T))[:, k]
-                    mat[i, :] += 0.5 * (np.matmul(ca.T, kc2.T))[:, k]
+                    ac_ca = -0.5 * (2.0 * vv - vv.T)
+                    sigma[i, :] += (np.matmul(ac_ca / de, kc1.T))[:, k]
+                    sigma[i, :] += (np.matmul(ac_ca, kc2.T))[:, k]
 
-                sigma_mat[:, vecind] = mat.reshape(nocc * nvir)[:]
+                sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
             sigma_mat = self.comm.reduce(sigma_mat,
                                          op=MPI.SUM,
@@ -308,8 +291,8 @@ class AdcTwoDriver:
         # print converged excited states
 
         if self.rank == mpi_master():
-            self.print_convergence(start_time)
             reigs, rnorms = self.solver.get_eigenvalues()
+            self.print_convergence(start_time, reigs)
             return {'eigenvalues': reigs}
         else:
             return {}
@@ -438,7 +421,7 @@ class AdcTwoDriver:
         self.ostream.print_blank()
         self.ostream.flush()
 
-    def print_convergence(self, start_time):
+    def print_convergence(self, start_time, reigs):
         """Prints excited states information to output stream.
 
         Prints excited states information to output stream.
@@ -458,3 +441,15 @@ class AdcTwoDriver:
         valstr += "Time: {:.2f}".format(tm.time() - start_time) + " sec."
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
+        self.ostream.print_blank()
+
+        if self.is_converged:
+            valstr = "ADC excited states"
+            self.ostream.print_header(valstr.ljust(92))
+            self.ostream.print_header(('-' * len(valstr)).ljust(92))
+            for s, e in enumerate(reigs):
+                valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
+                valstr += '{:15.8f} a.u. '.format(e)
+                valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
+                self.ostream.print_header(valstr.ljust(92))
+            self.ostream.print_blank()
