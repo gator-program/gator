@@ -196,6 +196,8 @@ class AdcTwoDriver:
 
         for iteration in range(self.max_iter):
 
+            iter_start_time = tm.time()
+
             # precompute kc vectors for 2nd-order contribution (term C)
 
             kc = np.zeros((trial_mat.shape[1], 2, nocc, nvir))
@@ -279,7 +281,7 @@ class AdcTwoDriver:
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
 
             if self.rank == mpi_master():
-                self.print_iter_data(iteration)
+                self.print_iter_data(iteration, iter_start_time)
 
             # check convergence
 
@@ -387,7 +389,7 @@ class AdcTwoDriver:
         self.is_converged = self.comm.bcast(self.is_converged,
                                             root=mpi_master())
 
-    def print_iter_data(self, iter):
+    def print_iter_data(self, iter, iter_start_time):
         """Prints excited states solver iteration data to output stream.
 
         Prints excited states solver iteration data to output stream.
@@ -417,7 +419,10 @@ class AdcTwoDriver:
             exec_str += "au Residual Norm: {:3.8f}".format(rnorms[i])
             self.ostream.print_header(exec_str.ljust(84))
 
-        # flush output stream
+        self.ostream.print_blank()
+        self.ostream.print_info(
+            'Time spent in this iteration: {:.2f} sec.'.format(tm.time() -
+                                                               iter_start_time))
         self.ostream.print_blank()
         self.ostream.flush()
 
@@ -452,4 +457,5 @@ class AdcTwoDriver:
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
                 self.ostream.print_header(valstr.ljust(92))
+            self.ostream.print_blank()
             self.ostream.print_blank()

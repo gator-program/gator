@@ -1,4 +1,3 @@
-import numpy as np
 from veloxchem import AODensityMatrix
 from veloxchem import AOFockMatrix
 from veloxchem import ElectronRepulsionIntegralsDriver
@@ -8,6 +7,8 @@ from veloxchem.veloxchemlib import fockmat
 from veloxchem import SubCommunicators
 from veloxchem import get_qq_scheme
 from veloxchem import assert_msg_critical
+import numpy as np
+import time as tm
 
 
 class MOIntegralsDriver:
@@ -125,6 +126,8 @@ class MOIntegralsDriver:
 
         # compute OO blocks: <OV|OV>, <OO|VV>, <OO|OV>
 
+        start_time = tm.time()
+
         if local_master:
             mo_ints_ids = [(i, j) for i in range(nocc) for j in range(nocc)]
 
@@ -199,7 +202,14 @@ class MOIntegralsDriver:
                     ooov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
 
+        valstr = 'Integrals transformation for the OO block done in '
+        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+        self.ostream.print_info(valstr)
+        self.ostream.print_blank()
+
         # compute VV blocks: <VV|OO>, <VV|OV>
+
+        start_time = tm.time()
 
         if local_master:
             mo_ints_ids = [(a, b) for a in range(nvir) for b in range(nvir)]
@@ -258,6 +268,11 @@ class MOIntegralsDriver:
                         nocc * nocc)[:]
                     vvov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
+
+        valstr = 'Integrals transformation for the VV block done in '
+        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+        self.ostream.print_info(valstr)
+        self.ostream.print_blank()
 
         return {
             'oo_indices': oo_indices,
