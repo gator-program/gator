@@ -12,3 +12,15 @@ from .adcdriver import AdcDriver
 
 # Python functions
 from .mpiutils import mpi_sanity_check
+
+# Environment variable
+import os
+if 'OMP_NUM_THREADS' not in os.environ:
+    import multiprocessing
+    import sys
+    ncores = multiprocessing.cpu_count()
+    os.environ['OMP_NUM_THREADS'] = str(ncores)
+    print('* Warning * Environment variable OMP_NUM_THREADS not set.',
+          file=sys.stdout)
+    print('* Warning * Setting OMP_NUM_THREADS to {:d}.'.format(ncores),
+          file=sys.stdout)
