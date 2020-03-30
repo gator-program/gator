@@ -176,6 +176,8 @@ class AdcTwoDriver:
         # precompute ab and ij matrices for 2nd-order contribution
         # (terms A and B)
 
+        t0 = tm.time()
+
         # [ +2<kl|ac> -1<kl|ca> ] <kl|bc>
         m2_ab = np.zeros((nvir, nvir))
         for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
@@ -183,6 +185,10 @@ class AdcTwoDriver:
             local_ab = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
             m2_ab += np.matmul(local_ab / eabij, 2.0 * local_ab.T - local_ab)
             m2_ab += np.matmul(local_ab, (2.0 * local_ab.T - local_ab) / eabij)
+
+        self.ostream.print_info(
+            'Time spent in computing m2_ab: {:.2f} sec'.format(tm.time() - t0))
+        t0 = tm.time()
 
         # [ +2<cd|ik> -1<cd|ki> ] <cd|jk>
         m2_ij = np.zeros((nocc, nocc))
@@ -192,11 +198,18 @@ class AdcTwoDriver:
             m2_ij += np.matmul(local_ij / eabij, 2.0 * local_ij.T - local_ij)
             m2_ij += np.matmul(local_ij, (2.0 * local_ij.T - local_ij) / eabij)
 
+        self.ostream.print_info(
+            'Time spent in computing m2_ij: {:.2f} sec'.format(tm.time() - t0))
+        self.ostream.print_blank()
+
         # start iterations
 
         for iteration in range(self.max_iter):
 
             iter_start_time = tm.time()
+
+            iter_timing = []
+            t0 = tm.time()
 
             # precompute kc vectors for 2nd-order contribution (term C)
 
@@ -217,7 +230,16 @@ class AdcTwoDriver:
                     kc1[k, :] += (np.matmul(cb_bc, rjb.T))[:, j]
                     kc2[k, :] += (np.matmul(cb_bc / de, rjb.T))[:, j]
 
+            iter_timing.append(
+                'Time spent in computing kc: {:.2f} sec'.format(tm.time() - t0))
+            t0 = tm.time()
+
             kc = self.comm.allreduce(kc, op=MPI.SUM)
+
+            iter_timing.append(
+                'Time spent in communicating kc: {:.2f} sec'.format(tm.time() -
+                                                                    t0))
+            t0 = tm.time()
 
             # compute sigma vectors
 
@@ -269,19 +291,39 @@ class AdcTwoDriver:
 
                 sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
+            iter_timing.append(
+                'Time spent in computing sigma: {:.2f} sec'.format(tm.time() -
+                                                                   t0))
+            t0 = tm.time()
+
             sigma_mat = self.comm.reduce(sigma_mat,
                                          op=MPI.SUM,
                                          root=mpi_master())
+
+            iter_timing.append(
+                'Time spent in communicating sigma: {:.2f} sec'.format(
+                    tm.time() - t0))
+            t0 = tm.time()
 
             if self.rank == mpi_master():
                 self.solver.add_iteration_data(sigma_mat, trial_mat, iteration)
                 trial_mat = self.solver.compute(diag_mat)
             else:
                 trial_mat = None
+
+            iter_timing.append(
+                'Time spent in computing new trials: {:.2f} sec'.format(
+                    tm.time() - t0))
+            t0 = tm.time()
+
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
 
+            iter_timing.append(
+                'Time spent in communicating new trials: {:.2f} sec'.format(
+                    tm.time() - t0))
+
             if self.rank == mpi_master():
-                self.print_iter_data(iteration, iter_start_time)
+                self.print_iter_data(iteration, iter_start_time, iter_timing)
 
             # check convergence
 
@@ -389,7 +431,7 @@ class AdcTwoDriver:
         self.is_converged = self.comm.bcast(self.is_converged,
                                             root=mpi_master())
 
-    def print_iter_data(self, iter, iter_start_time):
+    def print_iter_data(self, iter, iter_start_time, iter_timing):
         """Prints excited states solver iteration data to output stream.
 
         Prints excited states solver iteration data to output stream.
@@ -418,8 +460,14 @@ class AdcTwoDriver:
             exec_str = "State {:2d}: {:5.8f} ".format(i + 1, reigs[i])
             exec_str += "au Residual Norm: {:3.8f}".format(rnorms[i])
             self.ostream.print_header(exec_str.ljust(84))
-
         self.ostream.print_blank()
+
+        # timing
+
+        for t in iter_timing:
+            self.ostream.print_info(t)
+        self.ostream.print_blank()
+
         self.ostream.print_info(
             'Time spent in this iteration: {:.2f} sec.'.format(tm.time() -
                                                                iter_start_time))
