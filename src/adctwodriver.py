@@ -187,7 +187,8 @@ class AdcTwoDriver:
             m2_ab += np.matmul(local_ab, (2.0 * local_ab.T - local_ab) / eabij)
 
         self.ostream.print_info(
-            'Time spent in computing m2_ab: {:.2f} sec'.format(tm.time() - t0))
+            'Time spent in computing m(2)_ab: {:.2f} sec'.format(tm.time() -
+                                                                 t0))
         t0 = tm.time()
 
         # [ +2<cd|ik> -1<cd|ki> ] <cd|jk>
@@ -199,7 +200,8 @@ class AdcTwoDriver:
             m2_ij += np.matmul(local_ij, (2.0 * local_ij.T - local_ij) / eabij)
 
         self.ostream.print_info(
-            'Time spent in computing m2_ij: {:.2f} sec'.format(tm.time() - t0))
+            'Time spent in computing m(2)_ij: {:.2f} sec'.format(tm.time() -
+                                                                 t0))
         self.ostream.print_blank()
 
         # start iterations
@@ -230,15 +232,12 @@ class AdcTwoDriver:
                     kc1[k, :] += (np.matmul(cb_bc, rjb.T))[:, j]
                     kc2[k, :] += (np.matmul(cb_bc / de, rjb.T))[:, j]
 
-            iter_timing.append(
-                'Time spent in computing kc: {:.2f} sec'.format(tm.time() - t0))
+            iter_timing.append(('computing kc vectors', tm.time() - t0))
             t0 = tm.time()
 
             kc = self.comm.allreduce(kc, op=MPI.SUM)
 
-            iter_timing.append(
-                'Time spent in communicating kc: {:.2f} sec'.format(tm.time() -
-                                                                    t0))
+            iter_timing.append(('communicating kc vectors', tm.time() - t0))
             t0 = tm.time()
 
             # compute sigma vectors
@@ -291,18 +290,14 @@ class AdcTwoDriver:
 
                 sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
-            iter_timing.append(
-                'Time spent in computing sigma: {:.2f} sec'.format(tm.time() -
-                                                                   t0))
+            iter_timing.append(('computing sigma vectors', tm.time() - t0))
             t0 = tm.time()
 
             sigma_mat = self.comm.reduce(sigma_mat,
                                          op=MPI.SUM,
                                          root=mpi_master())
 
-            iter_timing.append(
-                'Time spent in communicating sigma: {:.2f} sec'.format(
-                    tm.time() - t0))
+            iter_timing.append(('communicating sigma vectors', tm.time() - t0))
             t0 = tm.time()
 
             if self.rank == mpi_master():
@@ -311,16 +306,13 @@ class AdcTwoDriver:
             else:
                 trial_mat = None
 
-            iter_timing.append(
-                'Time spent in computing new trials: {:.2f} sec'.format(
-                    tm.time() - t0))
+            iter_timing.append(('computing new trial vectors', tm.time() - t0))
             t0 = tm.time()
 
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
 
             iter_timing.append(
-                'Time spent in communicating new trials: {:.2f} sec'.format(
-                    tm.time() - t0))
+                ('communicating new trial vectors', tm.time() - t0))
 
             if self.rank == mpi_master():
                 self.print_iter_data(iteration, iter_start_time, iter_timing)
@@ -464,13 +456,11 @@ class AdcTwoDriver:
 
         # timing
 
-        for t in iter_timing:
-            self.ostream.print_info(t)
-        self.ostream.print_blank()
-
         self.ostream.print_info(
             'Time spent in this iteration: {:.2f} sec.'.format(tm.time() -
                                                                iter_start_time))
+        for t in iter_timing:
+            self.ostream.print_info('  {:<35s} :   {:.2f} sec'.format(*t))
         self.ostream.print_blank()
         self.ostream.flush()
 
