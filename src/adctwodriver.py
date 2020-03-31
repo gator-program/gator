@@ -182,7 +182,7 @@ class AdcTwoDriver:
         m2_ab = np.zeros((nvir, nvir))
         for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
             eabij = eab - eocc[i] - eocc[j]
-            local_ab = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+            local_ab = moints_blocks['oovv'][ind]
             m2_ab += np.matmul(local_ab / eabij, 2.0 * local_ab.T - local_ab)
             m2_ab += np.matmul(local_ab, (2.0 * local_ab.T - local_ab) / eabij)
 
@@ -195,7 +195,7 @@ class AdcTwoDriver:
         m2_ij = np.zeros((nocc, nocc))
         for ind, (a, b) in enumerate(moints_blocks['vv_indices']):
             eabij = evir[a] + evir[b] - eij
-            local_ij = moints_blocks['vvoo'][ind, :].reshape(nocc, nocc)
+            local_ij = moints_blocks['vvoo'][ind]
             m2_ij += np.matmul(local_ij / eabij, 2.0 * local_ij.T - local_ij)
             m2_ij += np.matmul(local_ij, (2.0 * local_ij.T - local_ij) / eabij)
 
@@ -224,7 +224,7 @@ class AdcTwoDriver:
 
                 for ind, (k, j) in enumerate(moints_blocks['oo_indices']):
                     de = eab - eocc[k] - eocc[j]
-                    vv = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+                    vv = moints_blocks['oovv'][ind]
                     # [ +2<kj|cb> - <kj|bc> ] R_jb
                     # 'kjcb,jb->kc'
                     # 'kjbc,jb->kc'
@@ -257,9 +257,9 @@ class AdcTwoDriver:
 
                 for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
                     # 'ijab,jb->ia'
-                    ab = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+                    ab = moints_blocks['oovv'][ind]
                     # 'ibja,jb->ia'
-                    ba = moints_blocks['ovov'][ind, :].reshape(nvir, nvir)
+                    ba = moints_blocks['ovov'][ind]
                     ab_ba = 2.0 * ab - ba.T
                     sigma[i, :] += (np.matmul(ab_ba, rjb.T))[:, j]
 
@@ -280,7 +280,7 @@ class AdcTwoDriver:
 
                 for ind, (i, k) in enumerate(moints_blocks['oo_indices']):
                     de = eab - eocc[i] - eocc[k]
-                    vv = moints_blocks['oovv'][ind, :].reshape(nvir, nvir)
+                    vv = moints_blocks['oovv'][ind]
                     # -0.5 [ +2<ac|ik> -1<ac|ki> ] R_kc
                     # 'ikac,kc->ia'
                     # 'ikca,kc->ia'

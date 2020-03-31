@@ -129,13 +129,18 @@ class MOIntegralsDriver:
         start_time = tm.time()
 
         if local_master:
-            mo_ints_ids = [(i, j) for i in range(nocc) for j in range(nocc)]
+            # only computes ij pairs where i <= j
+            mo_ints_ids = [(i, i) for i in range(nocc)]
+            mo_ints_ids += [
+                (i, j) for i in range(nocc) for j in range(i + 1, nocc)
+            ]
+
             oo_indices = mo_ints_ids[cross_rank::cross_nodes]
             oo_count = len(oo_indices)
 
-            ovov = np.zeros((oo_count, nvir * nvir))
-            oovv = np.zeros((oo_count, nvir * nvir))
-            ooov = np.zeros((oo_count, nocc * nvir))
+            ovov = []
+            oovv = []
+            ooov = []
 
             num_batches = oo_count // self.batch_size
             if oo_count % self.batch_size != 0:
@@ -182,8 +187,10 @@ class MOIntegralsDriver:
                 for i in range(fock.number_of_fock_matrices()):
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    ovov[i + batch_ind * self.batch_size, :] = f_vv.reshape(
-                        nvir * nvir)[:]
+                    ovov.append(f_vv)
+                    pair = oo_indices[i + batch_start]
+                    if pair[0] != pair[1]:
+                        ovov.append(f_vv.T)
 
             fock = AOFockMatrix(dens)
             for i in range(fock.number_of_fock_matrices()):
@@ -198,10 +205,13 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    oovv[i + batch_ind * self.batch_size, :] = f_vv.reshape(
-                        nvir * nvir)[:]
-                    ooov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
-                        nocc * nvir)[:]
+                    f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                    oovv.append(f_vv)
+                    ooov.append(f_ov)
+                    pair = oo_indices[i + batch_start]
+                    if pair[0] != pair[1]:
+                        oovv.append(f_vv.T)
+                        ooov.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -209,6 +219,14 @@ class MOIntegralsDriver:
             load_imb = 0.0
             if global_master:
                 load_imb = 1.0 - min(dt) / max(dt)
+
+        # make full ij pairs
+        oo_indices_full = []
+        for i, j in oo_indices:
+            oo_indices_full.append((i, j))
+            if i != j:
+                oo_indices_full.append((j, i))
+        oo_indices = oo_indices_full
 
         self.ostream.print_blank()
         valstr = 'Integrals transformation for the OO block done in '
@@ -222,12 +240,17 @@ class MOIntegralsDriver:
         start_time = tm.time()
 
         if local_master:
-            mo_ints_ids = [(a, b) for a in range(nvir) for b in range(nvir)]
+            # only computes ab pairs where a <= b
+            mo_ints_ids = [(a, a) for a in range(nvir)]
+            mo_ints_ids += [
+                (a, b) for a in range(nvir) for b in range(a + 1, nvir)
+            ]
+
             vv_indices = mo_ints_ids[cross_rank::cross_nodes]
             vv_count = len(vv_indices)
 
-            vvoo = np.zeros((vv_count, nocc * nocc))
-            vvov = np.zeros((vv_count, nocc * nvir))
+            vvoo = []
+            vvov = []
 
             num_batches = vv_count // self.batch_size
             if vv_count % self.batch_size != 0:
@@ -275,10 +298,13 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    vvoo[i + batch_ind * self.batch_size, :] = f_oo.reshape(
-                        nocc * nocc)[:]
-                    vvov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
-                        nocc * nvir)[:]
+                    f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                    vvoo.append(f_oo)
+                    vvov.append(f_ov)
+                    pair = vv_indices[i + batch_start]
+                    if pair[0] != pair[1]:
+                        vvoo.append(f_oo.T)
+                        vvov.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -286,6 +312,14 @@ class MOIntegralsDriver:
             load_imb = 0.0
             if global_master:
                 load_imb = 1.0 - min(dt) / max(dt)
+
+        # make full ab pairs
+        vv_indices_full = []
+        for a, b in vv_indices:
+            vv_indices_full.append((a, b))
+            if a != b:
+                vv_indices_full.append((b, a))
+        vv_indices = vv_indices_full
 
         self.ostream.print_blank()
         valstr = 'Integrals transformation for the VV block done in '
