@@ -130,21 +130,15 @@ class MOIntegralsDriver:
 
         if local_master:
             mo_ints_ids = [(i, j) for i in range(nocc) for j in range(nocc)]
+            oo_indices = mo_ints_ids[cross_rank::cross_nodes]
+            oo_count = len(oo_indices)
 
-            ave, res = divmod(len(mo_ints_ids), cross_nodes)
-            count = [ave + 1 if i < res else ave for i in range(cross_nodes)]
-            displ = [sum(count[:i]) for i in range(cross_nodes)]
+            ovov = np.zeros((oo_count, nvir * nvir))
+            oovv = np.zeros((oo_count, nvir * nvir))
+            ooov = np.zeros((oo_count, nocc * nvir))
 
-            mo_ints_start = displ[cross_rank]
-            mo_ints_end = mo_ints_start + count[cross_rank]
-
-            oo_indices = mo_ints_ids[mo_ints_start:mo_ints_end]
-            ovov = np.zeros((count[cross_rank], nvir * nvir))
-            oovv = np.zeros((count[cross_rank], nvir * nvir))
-            ooov = np.zeros((count[cross_rank], nocc * nvir))
-
-            num_batches = count[cross_rank] // self.batch_size
-            if count[cross_rank] % self.batch_size != 0:
+            num_batches = oo_count // self.batch_size
+            if oo_count % self.batch_size != 0:
                 num_batches += 1
         else:
             num_batches = None
@@ -161,9 +155,9 @@ class MOIntegralsDriver:
             self.ostream.flush()
 
             if local_master:
-                batch_start = mo_ints_start + batch_ind * self.batch_size
-                batch_end = min(batch_start + self.batch_size, mo_ints_end)
-                batch_ids = mo_ints_ids[batch_start:batch_end]
+                batch_start = batch_ind * self.batch_size
+                batch_end = min(batch_start + self.batch_size, oo_count)
+                batch_ids = oo_indices[batch_start:batch_end]
 
                 dks = []
                 for i, j in batch_ids:
@@ -209,9 +203,17 @@ class MOIntegralsDriver:
                     ooov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
 
+        if local_master:
+            dt = tm.time() - start_time
+            dt = cross_comm.gather(dt, root=mpi_master())
+            load_imb = 0.0
+            if global_master:
+                load_imb = 1.0 - min(dt) / max(dt)
+
         self.ostream.print_blank()
         valstr = 'Integrals transformation for the OO block done in '
         valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
         self.ostream.print_info(valstr)
         self.ostream.print_blank()
 
@@ -221,20 +223,14 @@ class MOIntegralsDriver:
 
         if local_master:
             mo_ints_ids = [(a, b) for a in range(nvir) for b in range(nvir)]
+            vv_indices = mo_ints_ids[cross_rank::cross_nodes]
+            vv_count = len(vv_indices)
 
-            ave, res = divmod(len(mo_ints_ids), cross_nodes)
-            count = [ave + 1 if i < res else ave for i in range(cross_nodes)]
-            displ = [sum(count[:i]) for i in range(cross_nodes)]
+            vvoo = np.zeros((vv_count, nocc * nocc))
+            vvov = np.zeros((vv_count, nocc * nvir))
 
-            mo_ints_start = displ[cross_rank]
-            mo_ints_end = mo_ints_start + count[cross_rank]
-
-            vv_indices = mo_ints_ids[mo_ints_start:mo_ints_end]
-            vvoo = np.zeros((count[cross_rank], nocc * nocc))
-            vvov = np.zeros((count[cross_rank], nocc * nvir))
-
-            num_batches = count[cross_rank] // self.batch_size
-            if count[cross_rank] % self.batch_size != 0:
+            num_batches = vv_count // self.batch_size
+            if vv_count % self.batch_size != 0:
                 num_batches += 1
         else:
             num_batches = None
@@ -251,9 +247,9 @@ class MOIntegralsDriver:
             self.ostream.flush()
 
             if local_master:
-                batch_start = mo_ints_start + batch_ind * self.batch_size
-                batch_end = min(batch_start + self.batch_size, mo_ints_end)
-                batch_ids = mo_ints_ids[batch_start:batch_end]
+                batch_start = batch_ind * self.batch_size
+                batch_end = min(batch_start + self.batch_size, vv_count)
+                batch_ids = vv_indices[batch_start:batch_end]
 
                 dks = []
                 for a, b in batch_ids:
@@ -284,9 +280,17 @@ class MOIntegralsDriver:
                     vvov[i + batch_ind * self.batch_size, :] = f_ov.reshape(
                         nocc * nvir)[:]
 
+        if local_master:
+            dt = tm.time() - start_time
+            dt = cross_comm.gather(dt, root=mpi_master())
+            load_imb = 0.0
+            if global_master:
+                load_imb = 1.0 - min(dt) / max(dt)
+
         self.ostream.print_blank()
         valstr = 'Integrals transformation for the VV block done in '
         valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
         self.ostream.print_info(valstr)
         self.ostream.print_blank()
 
