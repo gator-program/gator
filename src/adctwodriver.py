@@ -13,45 +13,33 @@ import time as tm
 
 
 class AdcTwoDriver:
-    """Implements ADC(2) computation driver.
+    """
+    Implements ADC(2) computation driver.
 
-    Implements ADC(2) computation schheme for Hatree-Fock reference.
+    :param comm:
+        The MPI communicator.
+    :param ostream:
+        The output stream.
 
-    Attributes
-    ----------
-    nstates
-        The number of excited states determined by driver.
-    triplet
-        The triplet excited states flag.
-    eri_thresh
-        The electron repulsion integrals screening threshold.
-    conv_thresh
-        The excited states convergence threshold.
-    max_iter
-        The maximum number of excited states driver iterations.
-    cur_iter
-        The current number of excited states driver iterations.
-    solver
-        The eigenvalues solver.
-    is_converged
-        The flag for excited states convergence.
-    rank
-        The rank of MPI process.
-    nodes
-        The number of MPI processes.
+    Instance variable
+        - nstates: The number of excited states determined by driver.
+        - triplet: The triplet excited states flag.
+        - eri_thresh: The electron repulsion integrals screening
+          threshold.
+        - conv_thresh: The excited states convergence threshold.
+        - max_iter: The maximum number of excited states driver
+          iterations.
+        - cur_iter: The current number of excited states driver
+          iterations.
+        - solver: The eigenvalues solver.
+        - is_converged: The flag for excited states convergence.
+        - rank: The rank of MPI process.
+        - nodes: The number of MPI processes.
     """
 
     def __init__(self, comm, ostream):
-        """Initializes ADC(2) computation driver.
-
-        Initializes ADC(2) computation drived to default setup.
-
-        Parameters
-        ----------
-        comm
-            The MPI communicator.
-        ostream
-            The output stream.
+        """
+        Initializes ADC(2) computation driver.
         """
 
         # excited states information
@@ -78,13 +66,10 @@ class AdcTwoDriver:
         self.ostream = ostream
 
     def update_settings(self, settings):
-        """Updates settings in ADC(2) driver.
+        """
+        Updates settings in ADC(2) driver.
 
-        Updates settings in ADC(2) computation driver.
-
-        Parameters
-        ----------
-        settings
+        :param settings:
             The settings for the driver.
         """
 
@@ -107,18 +92,17 @@ class AdcTwoDriver:
             self.qq_type = settings['qq_type'].upper()
 
     def compute(self, molecule, basis, scf_tensors):
-        """Performs ADC(2) calculation.
+        """
+        Performs ADC(2) calculation.
 
-        Performs ADC(2) calculation using molecular data.
-
-        Parameters
-        ----------
-        molecule
+        :param molecule:
             The molecule.
-        basis
+        :param basis:
             The AO basis set.
-        scf_tensors
+        :param scf_tensors:
             The tensors from converged SCF wavefunction.
+        :return:
+            A dictionary containing excitation energies.
         """
 
         if self.rank == mpi_master():
@@ -334,7 +318,9 @@ class AdcTwoDriver:
             return {}
 
     def print_header(self):
-        """Prints ADC(2) driver setup header to output stream"""
+        """
+        Prints ADC(2) driver setup header to output stream.
+        """
 
         self.ostream.print_blank()
         self.ostream.print_header("ADC(2) Driver Setup")
@@ -362,20 +348,13 @@ class AdcTwoDriver:
         self.ostream.flush()
 
     def gen_trial_vectors(self, mol_orbs, molecule):
-        """Generates set of TDA trial vectors.
+        """Generates set of trial vectors.
 
-        Generates set of TDA trial vectors for given number of excited states
-        by selecting primitive excitations wirh lowest approximate energies
-        E_ai = e_a-e_i.
-
-        Parameters
-        ----------
-        mol_orbs
+        :param mol_orbs:
             The molecular orbitals.
-        molecule
+        :param molecule:
             The molecule.
-        Returns
-        -------
+        :return:
             The set of trial vectors.
         """
 
@@ -402,14 +381,10 @@ class AdcTwoDriver:
         return (None, [], [])
 
     def check_convergence(self, iteration):
-        """Checks convergence of excitation energies and set convergence flag.
+        """
+        Checks convergence of excitation energies and set convergence flag.
 
-        Checks convergence of excitation energies and set convergence flag on
-        all processes within MPI communicator.
-
-        Parameters
-        ----------
-        iter
+        :param iteration:
             The current excited states solver iteration.
         """
 
@@ -423,20 +398,20 @@ class AdcTwoDriver:
         self.is_converged = self.comm.bcast(self.is_converged,
                                             root=mpi_master())
 
-    def print_iter_data(self, iter, iter_start_time, iter_timing):
+    def print_iter_data(self, iteration, iter_start_time, iter_timing):
         """Prints excited states solver iteration data to output stream.
 
-        Prints excited states solver iteration data to output stream.
-
-        Parameters
-        ----------
-        iter
+        :param iteration:
             The current excited states solver iteration.
+        :param iter_start_time:
+            The starting time of the iteration.
+        :param iter_timing:
+            A list of tuple containing individual timings.
         """
 
         # iteration header
 
-        exec_str = " *** Iteration: " + (str(iter + 1)).rjust(3)
+        exec_str = " *** Iteration: " + (str(iteration + 1)).rjust(3)
         exec_str += " * Reduced Space: "
         exec_str += (str(self.solver.reduced_space_size())).rjust(4)
         rmax, rmin = self.solver.max_min_residual_norms()
@@ -465,14 +440,13 @@ class AdcTwoDriver:
         self.ostream.flush()
 
     def print_convergence(self, start_time, reigs):
-        """Prints excited states information to output stream.
+        """
+        Prints convergence and excited state information.
 
-        Prints excited states information to output stream.
-
-        Parameters
-        ----------
-        start_time
-            The start time of SCF calculation.
+        :param start_time:
+            The start time of calculation.
+        :param reigs:
+            The excitaion energies.
         """
 
         valstr = "*** {:d} excited states ".format(self.nstates)
@@ -485,9 +459,8 @@ class AdcTwoDriver:
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
         self.ostream.print_blank()
-
         if self.is_converged:
-            valstr = "ADC excited states"
+            valstr = "ADC(2) excited states [SS block only]"
             self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_header(('-' * len(valstr)).ljust(92))
             for s, e in enumerate(reigs):
@@ -497,3 +470,4 @@ class AdcTwoDriver:
                 self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_blank()
             self.ostream.print_blank()
+        self.ostream.flush()

@@ -82,6 +82,8 @@ class MOIntegralsDriver:
             The AO basis set.
         :param scf_tensors:
             The dictionary of tensors from converged SCF wavefunction.
+        :return:
+            A dictionary of indices and MO integrals.
         """
 
         # subcommunicators

@@ -8,8 +8,31 @@ import os
 
 
 class GatorTask:
+    """
+    Implements the GATOR task.
+
+    :param input_fname:
+        The intput filename.
+    :param output_fname:
+        The output filename.
+    :param comm:
+        The MPI communicator.
+
+    Instance variable
+        - mpi_comm: The MPI communicator.
+        - mpi_rank: The MPI rank.
+        - mpi_size: Number of MPI processes.
+        - input_dict: The input dictionary.
+        - ostream: The output stream.
+        - molecule: The molecule.
+        - ao_basis: The AO basis set.
+        - min_basis: The minimal AO basis set for generating initial guess.
+    """
 
     def __init__(self, input_fname, output_fname, comm):
+        """
+        Initializes the GATOR task.
+        """
 
         self.mpi_comm = comm
         self.mpi_rank = comm.Get_rank()

@@ -4,6 +4,7 @@ from veloxchem import ExcitationVector
 from veloxchem import MOIntegralsDriver
 from veloxchem import MolecularOrbitals
 from veloxchem import mpi_master
+from veloxchem import hartree_in_ev
 from veloxchem import get_qq_type
 from veloxchem.veloxchemlib import szblock
 from veloxchem import molorb
@@ -12,7 +13,8 @@ import time as tm
 
 
 class AdcOneDriver:
-    """Implements ADC(1) computation driver.
+    """
+    Implements ADC(1) computation driver.
 
     :param comm:
         The MPI communicator.
@@ -36,7 +38,8 @@ class AdcOneDriver:
     """
 
     def __init__(self, comm, ostream):
-        """Initializes ADC(1) computation driver.
+        """
+        Initializes ADC(1) computation driver.
         """
 
         # excited states information
@@ -98,6 +101,8 @@ class AdcOneDriver:
             The AO basis set.
         :param scf_tensors:
             The tensors from converged SCF wavefunction.
+        :return:
+            Excitation energies.
         """
 
         if self.rank == mpi_master():
@@ -215,8 +220,8 @@ class AdcOneDriver:
         # print converged excited states
 
         if self.rank == mpi_master():
-            self.print_convergence(start_time)
             reigs, rnorms = self.solver.get_eigenvalues()
+            self.print_convergence(start_time, reigs)
             return reigs
         else:
             return None
@@ -330,12 +335,14 @@ class AdcOneDriver:
         self.ostream.print_blank()
         self.ostream.flush()
 
-    def print_convergence(self, start_time):
+    def print_convergence(self, start_time, reigs):
         """
-        Prints excited states information.
+        Prints convergence information.
 
         :param start_time:
-            The start time of SCF calculation.
+            The start time of calculation.
+        :param reigs:
+            The excitation energies.
         """
 
         valstr = "*** {:d} excited states ".format(self.nstates)
@@ -347,4 +354,16 @@ class AdcOneDriver:
         valstr += "Time: {:.2f}".format(tm.time() - start_time) + " sec."
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
+        self.ostream.print_blank()
+        if self.is_converged:
+            valstr = "ADC(1) excited states"
+            self.ostream.print_header(valstr.ljust(92))
+            self.ostream.print_header(('-' * len(valstr)).ljust(92))
+            for s, e in enumerate(reigs):
+                valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
+                valstr += '{:15.8f} a.u. '.format(e)
+                valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
+                self.ostream.print_header(valstr.ljust(92))
+            self.ostream.print_blank()
+            self.ostream.print_blank()
         self.ostream.flush()

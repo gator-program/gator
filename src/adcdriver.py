@@ -166,7 +166,7 @@ class AdcDriver:
             cur_str = "Number of States, Spin-Flip  : {:d}".format(
                 self.adc_spin_flip)
         self.ostream.print_header(cur_str.ljust(str_width))
-       
+
         if self.adc_core_orbitals is not None:
             if isinstance(self.adc_core_orbitals, int):
                 cur_str = "CVS-ADC, Core Orbital Space  : {:d}".format(
@@ -236,7 +236,7 @@ class AdcDriver:
             self.ostream.flush()
         self.ostream.print_blank()
         self.ostream.print_blank()
-        self.ostream.print_header('=' * (len(text) + 2))    
+        self.ostream.print_header('=' * (len(text) + 2))
         self.ostream.print_header('End of ADC calculation.' + end)
         self.ostream.print_header('=' * (len(text) + 2))
         self.ostream.print_blank()
