@@ -130,10 +130,9 @@ class MOIntegralsDriver:
 
         if local_master:
             # only computes ij pairs where i <= j
-            mo_ints_ids = [(i, i) for i in range(nocc)]
-            mo_ints_ids += [
+            mo_ints_ids = [
                 (i, j) for i in range(nocc) for j in range(i + 1, nocc)
-            ]
+            ] + [(i, i) for i in range(nocc)]
 
             oo_indices = mo_ints_ids[cross_rank::cross_nodes]
             oo_count = len(oo_indices)
@@ -205,11 +204,11 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                     oovv.append(f_vv)
                     ooov.append(f_ov)
                     pair = oo_indices[i + batch_start]
                     if pair[0] != pair[1]:
+                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                         oovv.append(f_vv.T)
                         ooov.append(f_vo.T)
 
@@ -241,10 +240,9 @@ class MOIntegralsDriver:
 
         if local_master:
             # only computes ab pairs where a <= b
-            mo_ints_ids = [(a, a) for a in range(nvir)]
-            mo_ints_ids += [
+            mo_ints_ids = [
                 (a, b) for a in range(nvir) for b in range(a + 1, nvir)
-            ]
+            ] + [(a, a) for a in range(nvir)]
 
             vv_indices = mo_ints_ids[cross_rank::cross_nodes]
             vv_count = len(vv_indices)
@@ -298,11 +296,11 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                     vvoo.append(f_oo)
                     vvov.append(f_ov)
                     pair = vv_indices[i + batch_start]
                     if pair[0] != pair[1]:
+                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                         vvoo.append(f_oo.T)
                         vvov.append(f_vo.T)
 
