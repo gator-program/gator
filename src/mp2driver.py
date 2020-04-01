@@ -62,18 +62,27 @@ class Mp2Driver:
         # use conventional (in-memory) AO-to-MO integral transformation?
         self.conventional = False
 
-    def update_settings(self, mp2_dict):
+    def update_settings(self, mp2_dict, scf_drv=None):
         """
         Updates settings in MP2 driver.
 
         :param mp2_dict:
             The dictionary of MP2 settings.
+        :param scf_drv:
+            The scf driver.
         """
 
         if 'qq_type' in mp2_dict:
-            self.qq_type = mp2_dict['qq_type']
+            self.qq_type = mp2_dict['qq_type'].upper()
+        elif scf_drv is not None:
+            # inherit from SCF
+            self.qq_type = scf_drv.qq_type
+
         if 'eri_thresh' in mp2_dict:
             self.eri_thresh = float(mp2_dict['eri_thresh'])
+        elif scf_drv is not None:
+            # inherit from SCF
+            self.eri_thresh = scf_drv.eri_thresh
 
         if 'batch_size' in mp2_dict:
             self.batch_size = int(mp2_dict['batch_size'])

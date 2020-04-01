@@ -65,12 +65,14 @@ class AdcTwoDriver:
         # output stream
         self.ostream = ostream
 
-    def update_settings(self, settings):
+    def update_settings(self, settings, scf_drv=None):
         """
         Updates settings in ADC(2) driver.
 
         :param settings:
             The settings for the driver.
+        :param scf_drv:
+            The scf driver.
         """
 
         # calculation type
@@ -88,8 +90,14 @@ class AdcTwoDriver:
         # ERI settings
         if 'eri_thresh' in settings:
             self.eri_thresh = float(settings['eri_thresh'])
+        elif scf_drv is not None:
+            # inherit from SCF
+            self.eri_thresh = scf_drv.eri_thresh
         if 'qq_type' in settings:
             self.qq_type = settings['qq_type'].upper()
+        elif scf_drv is not None:
+            # inherit from SCF
+            self.qq_type = scf_drv.qq_type
 
     def compute(self, molecule, basis, scf_tensors):
         """
@@ -155,6 +163,10 @@ class AdcTwoDriver:
         # MO integrals
 
         moints_drv = MOIntsDriver(self.comm, self.ostream)
+        moints_drv.update_settings({
+            'qq_type': self.qq_type,
+            'eri_thresh': self.eri_thresh
+        })
         moints_blocks = moints_drv.compute(molecule, basis, scf_tensors)
 
         # precompute ab and ij matrices for 2nd-order contribution

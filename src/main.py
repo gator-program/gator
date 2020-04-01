@@ -34,29 +34,29 @@ def main():
             scf_drv.update_settings(input_dict['scf'])
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
 
-    if task_type == 'mp2':
-        mp2_drv = Mp2Driver(comm, ostream)
-        if 'mp2' in input_dict:
-            mp2_drv.update_settings(input_dict['mp2'])
-        mp2_drv.compute(task.molecule, task.ao_basis, scf_drv.mol_orbs)
-
     if task_type == 'adc':
         adc_drv = AdcDriver(comm, ostream)
-        if 'adc' in input_dict:
-            adc_drv.update_settings(input_dict['adc'])
+        adc_dict = input_dict['adc'] if 'adc' in input_dict else {}
+        adc_drv.update_settings(adc_dict)
         adc_drv.compute(task, scf_drv)
 
+    if task_type == 'mp2':
+        mp2_drv = Mp2Driver(comm, ostream)
+        mp2_dict = input_dict['mp2'] if 'mp2' in input_dict else {}
+        mp2_drv.update_settings(mp2_dict, scf_drv)
+        mp2_drv.compute(task.molecule, task.ao_basis, scf_drv.mol_orbs)
+
     if task_type == 'adc1':
-        adc_drv = AdcOneDriver(comm, ostream)
-        if 'adc1' in input_dict:
-            adc_drv.update_settings(input_dict['adc1'])
-        adc_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
+        adc_one_drv = AdcOneDriver(comm, ostream)
+        adc_one_dict = input_dict['adc1'] if 'adc1' in input_dict else {}
+        adc_one_drv.update_settings(adc_one_dict, scf_drv)
+        adc_one_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
 
     if task_type == 'adc2':
-        adc_drv = AdcTwoDriver(comm, ostream)
-        if 'adc2' in input_dict:
-            adc_drv.update_settings(input_dict['adc2'])
-        adc_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
+        adc_two_drv = AdcTwoDriver(comm, ostream)
+        adc_two_dict = input_dict['adc2'] if 'adc2' in input_dict else {}
+        adc_two_drv.update_settings(adc_two_dict, scf_drv)
+        adc_two_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
 
 
 if __name__ == "__main__":
