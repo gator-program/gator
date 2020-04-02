@@ -44,7 +44,7 @@ def main():
         mp2_drv = Mp2Driver(comm, ostream)
         mp2_dict = input_dict['mp2'] if 'mp2' in input_dict else {}
         mp2_drv.update_settings(mp2_dict, scf_drv)
-        mp2_drv.compute(task.molecule, task.ao_basis, scf_drv.mol_orbs)
+        mp2_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
 
     if task_type == 'adc1':
         adc_one_drv = AdcOneDriver(comm, ostream)

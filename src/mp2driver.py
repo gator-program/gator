@@ -2,10 +2,12 @@ import numpy as np
 import time as tm
 from veloxchem import AODensityMatrix
 from veloxchem import AOFockMatrix
+from veloxchem import MolecularOrbitals
 from veloxchem import ElectronRepulsionIntegralsDriver
 from veloxchem import mpi_master
 from veloxchem import denmat
 from veloxchem.veloxchemlib import fockmat
+from veloxchem import molorb
 from veloxchem import MOIntegralsDriver
 from veloxchem import SubCommunicators
 from veloxchem import get_qq_scheme
@@ -95,7 +97,7 @@ class Mp2Driver:
             key = mp2_dict['conventional'].lower()
             self.conventional = True if key in ['yes', 'y'] else False
 
-    def compute(self, molecule, ao_basis, mol_orbs):
+    def compute(self, molecule, ao_basis, scf_tensors):
         """
         Performs MP2 calculation.
 
@@ -103,9 +105,16 @@ class Mp2Driver:
             The molecule.
         :param ao_basis:
             The AO basis set.
-        :param mol_orbs:
-            The molecular orbitals.
+        :param scf_tensors:
+            The tensors from converged SCF wavefunction.
         """
+
+        if self.rank == mpi_master():
+            mo = scf_tensors['C']
+            ea = scf_tensors['E']
+            mol_orbs = MolecularOrbitals([mo], [ea], molorb.rest)
+        else:
+            mol_orbs = MolecularOrbitals()
 
         if self.conventional:
             self.compute_conventional(molecule, ao_basis, mol_orbs)
@@ -198,27 +207,16 @@ class Mp2Driver:
             evir = orb_ene[nocc:]
             eab = evir.reshape(-1, 1) + evir
 
-            mo_ints_ids = [(i, j) for i in range(nocc) for j in range(nocc)]
+            mo_ints_ids = [
+                (i, j) for i in range(nocc) for j in range(i + 1, nocc)
+            ] + [(i, i) for i in range(nocc)]
             self.print_header(len(mo_ints_ids))
-            valstr = 'Monitoring calculation on master node.'
-            self.ostream.print_header(valstr.ljust(80))
-            self.ostream.print_blank()
 
-            ave, res = divmod(len(mo_ints_ids), cross_nodes)
-            count = [ave + 1 if i < res else ave for i in range(cross_nodes)]
-            displ = [sum(count[:i]) for i in range(cross_nodes)]
+            local_indices = mo_ints_ids[cross_rank::cross_nodes]
+            local_count = len(local_indices)
 
-            valstr = '{:d} Fock matrices '.format(count[cross_rank])
-            valstr += 'will be processed on master node.'
-            self.ostream.print_header(valstr.ljust(80))
-            self.ostream.print_blank()
-            self.ostream.flush()
-
-            mo_ints_start = displ[cross_rank]
-            mo_ints_end = mo_ints_start + count[cross_rank]
-
-            num_batches = count[cross_rank] // self.batch_size
-            if count[cross_rank] % self.batch_size != 0:
+            num_batches = local_count // self.batch_size
+            if local_count % self.batch_size != 0:
                 num_batches += 1
         else:
             num_batches = None
@@ -227,15 +225,22 @@ class Mp2Driver:
 
         # compute MO integrals in batches
 
-        batch_t0 = tm.time()
+        valstr = 'Processing Fock builds for MP2... '
+        self.ostream.print_info(valstr)
+
+        start_time = tm.time()
 
         for batch_ind in range(num_batches):
 
+            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+            self.ostream.print_info(valstr)
+            self.ostream.flush()
+
             if local_master:
 
-                batch_start = mo_ints_start + batch_ind * self.batch_size
-                batch_end = min(batch_start + self.batch_size, mo_ints_end)
-                batch_ids = mo_ints_ids[batch_start:batch_end]
+                batch_start = batch_ind * self.batch_size
+                batch_end = min(batch_start + self.batch_size, local_count)
+                batch_ids = local_indices[batch_start:batch_end]
 
                 dks = []
                 for i, j in batch_ids:
@@ -258,23 +263,30 @@ class Mp2Driver:
 
             if local_master:
                 for ind, (i, j) in enumerate(batch_ids):
-                    eij = orb_ene[i] + orb_ene[j]
-                    denom = eij - eab
+                    f_ao = fock.alpha_to_numpy(ind)
+                    f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
+                    eijab = orb_ene[i] + orb_ene[j] - eab
 
-                    ij = np.linalg.multi_dot(
-                        [mo_vir.T, fock.alpha_to_numpy(ind), mo_vir])
-                    ij_asym = ij - ij.T
+                    ab = f_vv
+                    e_mp2 += np.sum(ab * (2.0 * ab - ab.T) / eijab)
 
-                    e_mp2 += np.sum(ij * (ij + ij_asym) / denom)
+                    if i != j:
+                        ba = f_vv.T
+                        e_mp2 += np.sum(ba * (2.0 * ba - ba.T) / eijab)
 
+        if local_master:
+            dt = tm.time() - start_time
+            dt = cross_comm.gather(dt, root=mpi_master())
+            load_imb = 0.0
             if global_master:
-                valstr = '{:d} / {:d}'.format(batch_end - mo_ints_start,
-                                              mo_ints_end - mo_ints_start)
-                valstr += ' Fock matrices processed. Time: {:.2f} sec'.format(
-                    tm.time() - batch_t0)
-                self.ostream.print_header(valstr.ljust(80))
-                self.ostream.print_blank()
-                self.ostream.flush()
+                load_imb = 1.0 - min(dt) / max(dt)
+
+        self.ostream.print_blank()
+        valstr = 'Fock builds for MP2 done in '
+        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
+        self.ostream.print_info(valstr)
+        self.ostream.print_blank()
 
         if local_master:
             e_mp2 = cross_comm.reduce(e_mp2, root=mpi_master())
