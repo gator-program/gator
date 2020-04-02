@@ -107,6 +107,8 @@ class Mp2Driver:
             The AO basis set.
         :param scf_tensors:
             The tensors from converged SCF wavefunction.
+        :return:
+            The MP2 energy.
         """
 
         if self.rank == mpi_master():
@@ -120,6 +122,8 @@ class Mp2Driver:
             self.compute_conventional(molecule, ao_basis, mol_orbs)
         else:
             self.compute_distributed(molecule, ao_basis, mol_orbs)
+
+        return self.e_mp2
 
     def compute_conventional(self, molecule, ao_basis, mol_orbs):
         """
