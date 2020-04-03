@@ -33,6 +33,8 @@ def main():
         if 'scf' in input_dict:
             scf_drv.update_settings(input_dict['scf'])
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
+        if not scf_drv.is_converged:
+            return
 
     if task_type == 'adc':
         adc_drv = AdcDriver(comm, ostream)
