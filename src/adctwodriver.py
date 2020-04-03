@@ -134,6 +134,11 @@ class AdcTwoDriver:
 
         if self.rank == mpi_master():
             self.print_header()
+            self.ostream.print_info(
+                'Number of occupied orbitals: {:d}'.format(nocc))
+            self.ostream.print_info(
+                'Number of virtual orbitals: {:d}'.format(nvir))
+            self.ostream.print_blank()
 
             fa = scf_tensors['F'][0]
             fmo = np.matmul(mo.T, np.matmul(fa, mo))
