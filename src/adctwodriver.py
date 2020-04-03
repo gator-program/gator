@@ -129,8 +129,8 @@ class AdcTwoDriver:
 
         eocc = ea[:nocc]
         evir = ea[nocc:]
-        eij = eocc.reshape(-1, 1) + eocc
-        eab = evir.reshape(-1, 1) + evir
+        e_oo = eocc.reshape(-1, 1) + eocc
+        e_vv = evir.reshape(-1, 1) + evir
 
         if self.rank == mpi_master():
             self.print_header()
@@ -172,38 +172,30 @@ class AdcTwoDriver:
             'qq_type': self.qq_type,
             'eri_thresh': self.eri_thresh
         })
-        moints_blocks = moints_drv.compute(molecule, basis, scf_tensors)
+        mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
+                                                      scf_tensors)
 
-        # precompute ab and ij matrices for 2nd-order contribution
-        # (terms A and B)
+        # precompute xA_ab and xB_ij matrices for 2nd-order contribution
 
-        t0 = tm.time()
+        xA_ab = np.zeros((nvir, nvir))
+        for ind, (k, l) in enumerate(mo_indices['oo']):
+            de = e_vv - eocc[k] - eocc[l]
+            vv = mo_integrals['chem_ovov_K'][ind]
+            # [ 2 (ka|lc) - (kc|la) ] (kb|lc)
+            ac_ca = 2.0 * vv - vv.T
+            bc = vv
+            xA_ab += np.matmul(ac_ca / de, bc.T)
+            xA_ab += np.matmul(ac_ca, bc.T / de)
 
-        # [ +2<kl|ac> -1<kl|ca> ] <kl|bc>
-        m2_ab = np.zeros((nvir, nvir))
-        for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
-            eabij = eab - eocc[i] - eocc[j]
-            local_ab = moints_blocks['oovv'][ind]
-            m2_ab += np.matmul(local_ab / eabij, 2.0 * local_ab.T - local_ab)
-            m2_ab += np.matmul(local_ab, (2.0 * local_ab.T - local_ab) / eabij)
-
-        self.ostream.print_info(
-            'Time spent in computing m(2)_ab: {:.2f} sec'.format(tm.time() -
-                                                                 t0))
-        t0 = tm.time()
-
-        # [ +2<cd|ik> -1<cd|ki> ] <cd|jk>
-        m2_ij = np.zeros((nocc, nocc))
-        for ind, (a, b) in enumerate(moints_blocks['vv_indices']):
-            eabij = evir[a] + evir[b] - eij
-            local_ij = moints_blocks['vvoo'][ind]
-            m2_ij += np.matmul(local_ij / eabij, 2.0 * local_ij.T - local_ij)
-            m2_ij += np.matmul(local_ij, (2.0 * local_ij.T - local_ij) / eabij)
-
-        self.ostream.print_info(
-            'Time spent in computing m(2)_ij: {:.2f} sec'.format(tm.time() -
-                                                                 t0))
-        self.ostream.print_blank()
+        xB_ij = np.zeros((nocc, nocc))
+        for ind, (c, d) in enumerate(mo_indices['vv']):
+            de = evir[c] + evir[d] - e_oo
+            oo = mo_integrals['chem_vovo_K'][ind]
+            # [ 2 (ci|dk) - (ck|di) ] (cj|dk)
+            ik_ki = 2.0 * oo - oo.T
+            jk = oo
+            xB_ij += np.matmul(ik_ki / de, jk.T)
+            xB_ij += np.matmul(ik_ki, jk.T / de)
 
         # start iterations
 
@@ -223,12 +215,10 @@ class AdcTwoDriver:
                 kc1 = kc[vecind, 0, :, :]
                 kc2 = kc[vecind, 1, :, :]
 
-                for ind, (k, j) in enumerate(moints_blocks['oo_indices']):
-                    de = eab - eocc[k] - eocc[j]
-                    vv = moints_blocks['oovv'][ind]
-                    # [ +2<kj|cb> - <kj|bc> ] R_jb
-                    # 'kjcb,jb->kc'
-                    # 'kjbc,jb->kc'
+                for ind, (k, j) in enumerate(mo_indices['oo']):
+                    de = e_vv - eocc[k] - eocc[j]
+                    vv = mo_integrals['chem_ovov_K'][ind]
+                    # [ 2 (kc|jb) - (kb|jc) ] R_jb
                     cb_bc = 2.0 * vv - vv.T
                     kc1[k, :] += (np.matmul(cb_bc, rjb.T))[:, j]
                     kc2[k, :] += (np.matmul(cb_bc / de, rjb.T))[:, j]
@@ -256,36 +246,33 @@ class AdcTwoDriver:
 
                 # 1st-order contribution
 
-                for ind, (i, j) in enumerate(moints_blocks['oo_indices']):
-                    # 'ijab,jb->ia'
-                    ab = moints_blocks['oovv'][ind]
-                    # 'ibja,jb->ia'
-                    ba = moints_blocks['ovov'][ind]
-                    ab_ba = 2.0 * ab - ba.T
-                    sigma[i, :] += (np.matmul(ab_ba, rjb.T))[:, j]
+                for ind, (i, j) in enumerate(mo_indices['oo']):
+                    # [ 2 (ia|jb) - (ij|ab) ] R_jb
+                    vv_1 = mo_integrals['chem_ovov_K'][ind]
+                    vv_2 = mo_integrals['chem_oovv_J'][ind]
+                    ab = 2.0 * vv_1 - vv_2
+                    sigma[i, :] += (np.matmul(ab, rjb.T))[:, j]
 
                 # 2nd-order contributions
 
-                # A: 0.5 [ +2<kl|ac> -1<kl|ca> ] <kl|bc> R_jb
+                # term A
 
-                sigma += 0.5 * np.matmul(rjb, m2_ab.T)
+                sigma += 0.5 * np.matmul(rjb, xA_ab.T)
 
-                # B: 0.5 [ +2<cd|ik> -1<cd|ki> ] <cd|jk> R_jb
+                # term B
 
-                sigma += 0.5 * np.matmul(m2_ij, rjb)
+                sigma += 0.5 * np.matmul(xB_ij, rjb)
 
-                # C: -0.5 [ +2<ac|ik> -1<ac|ki> ] [ +2<jk|bc> - <jk|cb> ] R_jb
+                # term C
 
                 kc1 = kc[vecind, 0, :, :]
                 kc2 = kc[vecind, 1, :, :]
 
-                for ind, (i, k) in enumerate(moints_blocks['oo_indices']):
-                    de = eab - eocc[i] - eocc[k]
-                    vv = moints_blocks['oovv'][ind]
-                    # -0.5 [ +2<ac|ik> -1<ac|ki> ] R_kc
-                    # 'ikac,kc->ia'
-                    # 'ikca,kc->ia'
-                    ac_ca = -0.5 * (2.0 * vv - vv.T)
+                for ind, (i, k) in enumerate(mo_indices['oo']):
+                    de = e_vv - eocc[i] - eocc[k]
+                    vv = mo_integrals['chem_ovov_K'][ind]
+                    # -0.5 [ 2 (ia|kc) - (ic|ka) ] R_kc
+                    ac_ca = -vv + 0.5 * vv.T
                     sigma[i, :] += (np.matmul(ac_ca / de, kc1.T))[:, k]
                     sigma[i, :] += (np.matmul(ac_ca, kc2.T))[:, k]
 

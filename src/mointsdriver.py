@@ -129,7 +129,8 @@ class MOIntegralsDriver:
             mo_occ = mo[:, :nocc]
             mo_vir = mo[:, nocc:]
 
-        # compute OO blocks: <OV|OV>, <OO|VV>, <OO|OV>
+        # compute OO blocks: (OO|VV), (OV|OV), (OO|OV)
+        #                     **       *  *     *  *
 
         start_time = tm.time()
 
@@ -142,9 +143,9 @@ class MOIntegralsDriver:
             oo_indices = mo_ints_ids[cross_rank::cross_nodes]
             oo_count = len(oo_indices)
 
-            ovov = []
-            oovv = []
-            ooov = []
+            chem_oovv_J = []
+            chem_ovov_K = []
+            chem_ooov_K = []
 
             num_batches = oo_count // self.batch_size
             if oo_count % self.batch_size != 0:
@@ -191,10 +192,10 @@ class MOIntegralsDriver:
                 for i in range(fock.number_of_fock_matrices()):
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    ovov.append(f_vv)
+                    chem_oovv_J.append(f_vv)
                     pair = oo_indices[i + batch_start]
                     if pair[0] != pair[1]:
-                        ovov.append(f_vv.T)
+                        chem_oovv_J.append(f_vv.T)
 
             fock = AOFockMatrix(dens)
             for i in range(fock.number_of_fock_matrices()):
@@ -209,13 +210,13 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    oovv.append(f_vv)
-                    ooov.append(f_ov)
+                    chem_ovov_K.append(f_vv)
+                    chem_ooov_K.append(f_ov)
                     pair = oo_indices[i + batch_start]
                     if pair[0] != pair[1]:
                         f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
-                        oovv.append(f_vv.T)
-                        ooov.append(f_vo.T)
+                        chem_ovov_K.append(f_vv.T)
+                        chem_ooov_K.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -239,7 +240,8 @@ class MOIntegralsDriver:
         self.ostream.print_info(valstr)
         self.ostream.print_blank()
 
-        # compute VV blocks: <VV|OO>, <VV|OV>
+        # compute VV blocks: (VO|VO), (VO|VV)
+        #                     *  *     *  *
 
         start_time = tm.time()
 
@@ -252,8 +254,8 @@ class MOIntegralsDriver:
             vv_indices = mo_ints_ids[cross_rank::cross_nodes]
             vv_count = len(vv_indices)
 
-            vvoo = []
-            vvov = []
+            chem_vovo_K = []
+            chem_vovv_K = []
 
             num_batches = vv_count // self.batch_size
             if vv_count % self.batch_size != 0:
@@ -301,13 +303,13 @@ class MOIntegralsDriver:
                     f_ao = fock.alpha_to_numpy(i)
                     f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                     f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    vvoo.append(f_oo)
-                    vvov.append(f_ov)
+                    chem_vovo_K.append(f_oo)
+                    chem_vovv_K.append(f_ov)
                     pair = vv_indices[i + batch_start]
                     if pair[0] != pair[1]:
                         f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
-                        vvoo.append(f_oo.T)
-                        vvov.append(f_vo.T)
+                        chem_vovo_K.append(f_oo.T)
+                        chem_vovv_K.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -331,15 +333,20 @@ class MOIntegralsDriver:
         self.ostream.print_info(valstr)
         self.ostream.print_blank()
 
-        return {
-            'oo_indices': oo_indices,
-            'ovov': ovov,
-            'oovv': oovv,
-            'ooov': ooov,
-            'vv_indices': vv_indices,
-            'vvoo': vvoo,
-            'vvov': vvov,
+        indices = {
+            'oo': oo_indices,
+            'vv': vv_indices,
         }
+
+        integrals = {
+            'chem_oovv_J': chem_oovv_J,
+            'chem_ovov_K': chem_ovov_K,
+            'chem_ooov_K': chem_ooov_K,
+            'chem_vovo_K': chem_vovo_K,
+            'chem_vovv_K': chem_vovv_K,
+        }
+
+        return indices, integrals
 
     def print_header(self):
         """
