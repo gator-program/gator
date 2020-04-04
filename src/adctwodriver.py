@@ -220,8 +220,8 @@ class AdcTwoDriver:
                     vv = mo_integrals['chem_ovov_K'][ind]
                     # [ 2 (kc|jb) - (kb|jc) ] R_jb
                     cb_bc = 2.0 * vv - vv.T
-                    kc1[k, :] += (np.matmul(cb_bc, rjb.T))[:, j]
-                    kc2[k, :] += (np.matmul(cb_bc / de, rjb.T))[:, j]
+                    kc1[k, :] += np.dot(cb_bc, rjb[j, :])
+                    kc2[k, :] += np.dot(cb_bc / de, rjb[j, :])
 
             iter_timing.append(('computing kc vectors', tm.time() - t0))
             t0 = tm.time()
@@ -251,7 +251,7 @@ class AdcTwoDriver:
                     vv_1 = mo_integrals['chem_ovov_K'][ind]
                     vv_2 = mo_integrals['chem_oovv_J'][ind]
                     ab = 2.0 * vv_1 - vv_2
-                    sigma[i, :] += (np.matmul(ab, rjb.T))[:, j]
+                    sigma[i, :] += np.dot(ab, rjb[j, :])
 
                 # 2nd-order contributions
 
@@ -273,8 +273,8 @@ class AdcTwoDriver:
                     vv = mo_integrals['chem_ovov_K'][ind]
                     # -0.5 [ 2 (ia|kc) - (ic|ka) ] R_kc
                     ac_ca = -vv + 0.5 * vv.T
-                    sigma[i, :] += (np.matmul(ac_ca / de, kc1.T))[:, k]
-                    sigma[i, :] += (np.matmul(ac_ca, kc2.T))[:, k]
+                    sigma[i, :] += np.dot(ac_ca / de, kc1[k, :])
+                    sigma[i, :] += np.dot(ac_ca, kc2[k, :])
 
                 sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 

@@ -145,7 +145,7 @@ class MOIntegralsDriver:
 
             chem_oovv_J = []
             chem_ovov_K = []
-            chem_ooov_K = []
+            #chem_ooov_K = []
 
             num_batches = oo_count // self.batch_size
             if oo_count % self.batch_size != 0:
@@ -209,14 +209,14 @@ class MOIntegralsDriver:
                 for i in range(fock.number_of_fock_matrices()):
                     f_ao = fock.alpha_to_numpy(i)
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
+                    #f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
                     chem_ovov_K.append(f_vv)
-                    chem_ooov_K.append(f_ov)
+                    #chem_ooov_K.append(f_ov)
                     pair = oo_indices[i + batch_start]
                     if pair[0] != pair[1]:
-                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                        #f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                         chem_ovov_K.append(f_vv.T)
-                        chem_ooov_K.append(f_vo.T)
+                        #chem_ooov_K.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -255,7 +255,7 @@ class MOIntegralsDriver:
             vv_count = len(vv_indices)
 
             chem_vovo_K = []
-            chem_vovv_K = []
+            #chem_vovv_K = []
 
             num_batches = vv_count // self.batch_size
             if vv_count % self.batch_size != 0:
@@ -302,14 +302,14 @@ class MOIntegralsDriver:
                 for i in range(fock.number_of_fock_matrices()):
                     f_ao = fock.alpha_to_numpy(i)
                     f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
-                    f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
+                    #f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
                     chem_vovo_K.append(f_oo)
-                    chem_vovv_K.append(f_ov)
+                    #chem_vovv_K.append(f_ov)
                     pair = vv_indices[i + batch_start]
                     if pair[0] != pair[1]:
-                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                        #f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
                         chem_vovo_K.append(f_oo.T)
-                        chem_vovv_K.append(f_vo.T)
+                        #chem_vovv_K.append(f_vo.T)
 
         if local_master:
             dt = tm.time() - start_time
@@ -341,9 +341,9 @@ class MOIntegralsDriver:
         integrals = {
             'chem_oovv_J': chem_oovv_J,
             'chem_ovov_K': chem_ovov_K,
-            'chem_ooov_K': chem_ooov_K,
+            #'chem_ooov_K': chem_ooov_K,
             'chem_vovo_K': chem_vovo_K,
-            'chem_vovv_K': chem_vovv_K,
+            #'chem_vovv_K': chem_vovv_K,
         }
 
         return indices, integrals
