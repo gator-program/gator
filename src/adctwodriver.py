@@ -131,6 +131,7 @@ class AdcTwoDriver:
         evir = ea[nocc:]
         e_oo = eocc.reshape(-1, 1) + eocc
         e_vv = evir.reshape(-1, 1) + evir
+        e_ov = -eocc.reshape(-1, 1) + evir
 
         if self.rank == mpi_master():
             self.print_header()
@@ -160,6 +161,7 @@ class AdcTwoDriver:
         else:
             trial_mat = None
         trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
+        reigs = self.comm.bcast(reigs, root=mpi_master())
 
         # block Davidson algorithm setup
 
@@ -276,6 +278,128 @@ class AdcTwoDriver:
                     sigma[i, :] += np.dot(ac_ca / de, kc1[k, :])
                     sigma[i, :] += np.dot(ac_ca, kc2[k, :])
 
+                # single-double coupling term
+
+                prefac = 1.0
+
+                # [ 2 (ki|ld) - (kd|li) ] δac (kj|ld) δbc R_jb / (w-e_klcd)
+                # [ 2 (ki|lb) - (kb|li) ] δac (ka|lj) δbd R_jb / (w-e_klcd)
+
+                for ind, (k, l) in enumerate(mo_indices['oo']):
+                    omega_de = reigs[vecind] - (e_vv - eocc[k] - eocc[l])
+                    ov_kl = mo_integrals['chem_ooov_K'][ind]
+                    if k < l:
+                        ov_lk = mo_integrals['chem_ooov_K'][ind + 1]
+                    elif k > l:
+                        ov_lk = mo_integrals['chem_ooov_K'][ind - 1]
+                    elif k == l:
+                        ov_lk = ov_kl
+
+                    # [ 2 (ki|ld) - (kd|li) ] δac (kj|ld) δbc R_jb / (w-e_klcd)
+
+                    # (kj|ld) δbc R_jb / (w-e_klcd)
+                    jd = ov_kl
+                    jc = rjb
+                    cd = np.matmul(jc.T, jd) / omega_de
+                    np.fill_diagonal(cd, 0.0)
+                    # [ 2 (ki|ld) - (li|kd) ] δac R_cd
+                    id_id = 2.0 * ov_kl - ov_lk
+                    ad = cd
+                    sigma += prefac * np.matmul(id_id, ad.T)
+
+                    # [ 2 (ki|lb) - (kb|li) ] δac (ka|lj) δbd R_jb / (w-e_klcd)
+
+                    # δac (lj|ka) δbd R_jb / (w-e_klcd)
+                    ja = ov_lk
+                    ab = np.matmul(ja.T, rjb) / omega_de
+                    np.fill_diagonal(ab, 0.0)
+                    # [ 2 (ki|lb) - (li|kb) ] R_ab
+                    ib_ib = 2.0 * ov_kl - ov_lk
+                    sigma += prefac * np.matmul(ib_ib, ab.T)
+
+                # [ 2 (ac|ld) - (ad|lc) ] δik (bc|ld) δjk R_jb / (w-e_klcd)
+                # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
+
+                for ind, (c, d) in enumerate(mo_indices['vv']):
+                    omega_de = reigs[vecind] - (evir[c] + evir[d] - e_oo)
+                    ov_cd = mo_integrals['chem_vovv_K'][ind]
+                    if c < d:
+                        ov_dc = mo_integrals['chem_vovv_K'][ind + 1]
+                    elif c > d:
+                        ov_dc = mo_integrals['chem_vovv_K'][ind - 1]
+                    elif c == d:
+                        ov_dc = ov_cd
+
+                    # [ 2 (ac|ld) - (ad|lc) ] δik (bc|ld) δjk R_jb / (w-e_klcd)
+
+                    # (ld|bc) δjk R_jb / (w-e_klcd)
+                    lb = ov_dc
+                    kb = rjb
+                    kl = np.matmul(kb, lb.T) / omega_de
+                    np.fill_diagonal(kl, 0.0)
+                    # [ 2 (dl|ca) - (cl|da) ] δik R_kl
+                    la_la = 2.0 * ov_dc - ov_cd
+                    il = kl
+                    sigma += prefac * np.matmul(il, la_la)
+
+                    # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
+
+                    # δik (ic|bd) δjl R_jb / (w-e_klcd)
+                    ib = ov_cd
+                    ij = np.matmul(ib, rjb.T) / omega_de
+                    np.fill_diagonal(ij, 0.0)
+                    # [ 2 (dj|ca) - (cj|da) ] R_ij
+                    ja_ja = 2.0 * ov_dc - ov_cd
+                    sigma += prefac * np.matmul(ij, ja_ja)
+
+                # [ -2 (ji|ld) + (jd|li) ] δac (ba|ld) δjk R_jb / (w-e_klcd)
+                # [ -2 (jd|li) + (ji|ld) ] δac (bd|la) δjk R_jb / (w-e_klcd)
+                # [ -2 (ab|ld) + (ad|lb) ] δik (ij|ld) δbc R_jb / (w-e_klcd)
+                # [ -2 (ad|lb) + (ab|ld) ] δik (id|lj) δbc R_jb / (w-e_klcd)
+
+                for ind, (l, d) in enumerate(mo_indices['ov']):
+                    omega_de = reigs[vecind] - (e_ov + evir[d] - eocc[l])
+                    oo_J = mo_integrals['chem_ovoo_J'][ind]
+                    oo_K = mo_integrals['chem_oovo_K'][ind]
+                    vv_J = mo_integrals['chem_ovvv_J'][ind]
+                    vv_K = mo_integrals['chem_ovvv_K'][ind]
+
+                    # [ -2 (ji|ld) + (jd|li) ] δac (ba|ld) δjk R_jb / (w-e_klcd)
+
+                    # δac (ab|ld) δjk R_jb / (w-e_klcd)
+                    ab = vv_J
+                    ja = np.matmul(rjb, ab.T) / omega_de
+                    # [ -2 (ij|ld) + (il|jd) ] R_ja
+                    ij_ij = -2.0 * oo_J + oo_K
+                    sigma += prefac * np.matmul(ij_ij, ja)
+
+                    # [ -2 (jd|li) + (ji|ld) ] δac (bd|la) δjk R_jb / (w-e_klcd)
+
+                    # δac (al|bd) δjk R_jb / (w-e_klcd)
+                    ab = vv_K
+                    ja = np.matmul(rjb, ab.T) / omega_de
+                    # [ -2 (il|jd) + (ij|ld) ] R_ja
+                    ij_ij = -2.0 * oo_K + oo_J
+                    sigma += prefac * np.matmul(ij_ij, ja)
+
+                    # [ -2 (ab|ld) + (ad|lb) ] δik (ij|ld) δbc R_jb / (w-e_klcd)
+
+                    # δik (ij|ld) δbc R_jb / (w-e_klcd)
+                    ij = oo_J
+                    ib = np.matmul(ij, rjb) / omega_de
+                    # [ -2 (ab|ld) + (bl|ad) ] R_ib
+                    ba_ba = -2.0 * vv_J + vv_K
+                    sigma += prefac * np.matmul(ib, ba_ba)
+
+                    # [ -2 (ad|lb) + (ab|ld) ] δik (id|lj) δbc R_jb / (w-e_klcd)
+
+                    # δik (jl|id) δbc R_jb / (w-e_klcd)
+                    ji = oo_K
+                    ib = np.matmul(ji.T, rjb) / omega_de
+                    # [ -2 (bl|ad) + (ba|ld) ] R_ib
+                    ba_ba = -2.0 * vv_K + vv_J
+                    sigma += prefac * np.matmul(ib, ba_ba)
+
                 sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
             iter_timing.append(('computing sigma vectors', tm.time() - t0))
@@ -291,13 +415,16 @@ class AdcTwoDriver:
             if self.rank == mpi_master():
                 self.solver.add_iteration_data(sigma_mat, trial_mat, iteration)
                 trial_mat = self.solver.compute(diag_mat)
+                reigs, rnorms = self.solver.get_eigenvalues()
             else:
                 trial_mat = None
+                reigs = []
 
             iter_timing.append(('computing new trial vectors', tm.time() - t0))
             t0 = tm.time()
 
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
+            reigs = self.comm.bcast(reigs, root=mpi_master())
 
             iter_timing.append(
                 ('communicating new trial vectors', tm.time() - t0))
@@ -371,16 +498,16 @@ class AdcTwoDriver:
             exci_list = zvec.small_energy_identifiers(mol_orbs, self.nstates)
 
             diag_mat = zvec.diagonal_to_numpy(mol_orbs)
-            reigs = []
 
             trial_vecs = []
+            reigs = []
             for exci_ind in exci_list:
                 trial_vecs.append(
                     ExcitationVector(szblock.aa, 0, nocc, nocc, norb, True))
                 trial_vecs[-1].set_zcoefficient(1.0, exci_ind)
                 reigs.append(diag_mat[exci_ind][0])
 
-            return (diag_mat, trial_vecs, sorted(reigs))
+            return (diag_mat, trial_vecs, reigs)
 
         return (None, [], [])
 
