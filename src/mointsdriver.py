@@ -316,7 +316,7 @@ class MOIntegralsDriver:
 
         num_batches = local_comm.bcast(num_batches, root=mpi_master())
 
-        valstr = 'Processing Fock builds for the OO block... '
+        valstr = 'Processing Fock builds for the OV block... '
         self.ostream.print_info(valstr)
 
         for batch_ind in range(num_batches):

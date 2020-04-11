@@ -288,32 +288,27 @@ class AdcTwoDriver:
                 for ind, (k, l) in enumerate(mo_indices['oo']):
                     omega_de = reigs[vecind] - (e_vv - eocc[k] - eocc[l])
                     ov_kl = mo_integrals['chem_ooov_K'][ind]
-                    if k < l:
-                        ov_lk = mo_integrals['chem_ooov_K'][ind + 1]
-                    elif k > l:
-                        ov_lk = mo_integrals['chem_ooov_K'][ind - 1]
-                    elif k == l:
-                        ov_lk = ov_kl
+                    ind_lk = ind if k == l else (ind + 1 if k < l else ind - 1)
+                    ov_lk = mo_integrals['chem_ooov_K'][ind_lk]
 
                     # [ 2 (ki|ld) - (kd|li) ] δac (kj|ld) δbc R_jb / (w-e_klcd)
 
-                    # (kj|ld) δbc R_jb / (w-e_klcd)
+                    # δac (kj|ld) δbc R_jb / (w-e_klcd)
                     jd = ov_kl
-                    jc = rjb
-                    cd = np.matmul(jc.T, jd) / omega_de
-                    # [ 2 (ki|ld) - (li|kd) ] δac R_cd
+                    ja = rjb
+                    da = np.matmul(jd.T, ja) / omega_de
+                    # [ 2 (ki|ld) - (li|kd) ] R_ad
                     id_id = 2.0 * ov_kl - ov_lk
-                    ad = cd
-                    sigma += prefac * np.matmul(id_id, ad.T)
+                    sigma += prefac * np.matmul(id_id, da)
 
                     # [ 2 (ki|lb) - (kb|li) ] δac (ka|lj) δbd R_jb / (w-e_klcd)
 
                     # δac (lj|ka) δbd R_jb / (w-e_klcd)
                     ja = ov_lk
-                    ab = np.matmul(ja.T, rjb) / omega_de
+                    ba = np.matmul(rjb.T, ja) / omega_de
                     # [ 2 (ki|lb) - (li|kb) ] R_ab
                     ib_ib = 2.0 * ov_kl - ov_lk
-                    sigma += prefac * np.matmul(ib_ib, ab.T)
+                    sigma += prefac * np.matmul(ib_ib, ba)
 
                 # [ 2 (ac|ld) - (ad|lc) ] δik (bc|ld) δjk R_jb / (w-e_klcd)
                 # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
@@ -321,22 +316,17 @@ class AdcTwoDriver:
                 for ind, (c, d) in enumerate(mo_indices['vv']):
                     omega_de = reigs[vecind] - (evir[c] + evir[d] - e_oo)
                     ov_cd = mo_integrals['chem_vovv_K'][ind]
-                    if c < d:
-                        ov_dc = mo_integrals['chem_vovv_K'][ind + 1]
-                    elif c > d:
-                        ov_dc = mo_integrals['chem_vovv_K'][ind - 1]
-                    elif c == d:
-                        ov_dc = ov_cd
+                    ind_dc = ind if c == d else (ind + 1 if c < d else ind - 1)
+                    ov_dc = mo_integrals['chem_vovv_K'][ind_dc]
 
                     # [ 2 (ac|ld) - (ad|lc) ] δik (bc|ld) δjk R_jb / (w-e_klcd)
 
-                    # (dl|cb) δjk R_jb / (w-e_klcd)
+                    # δik (dl|cb) δjk R_jb / (w-e_klcd)
                     lb = ov_dc
-                    kb = rjb
-                    kl = np.matmul(kb, lb.T) / omega_de
-                    # [ 2 (dl|ca) - (cl|da) ] δik R_kl
+                    ib = rjb
+                    il = np.matmul(ib, lb.T) / omega_de
+                    # [ 2 (dl|ca) - (cl|da) ] R_kl
                     la_la = 2.0 * ov_dc - ov_cd
-                    il = kl
                     sigma += prefac * np.matmul(il, la_la)
 
                     # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
