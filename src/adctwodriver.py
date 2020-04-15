@@ -382,8 +382,6 @@ class AdcTwoDriver:
 
             # single-double coupling term
 
-            prefac = 1.0
-
             # [ 2 (ki|ld) - (kd|li) ] δac (kj|ld) δbc R_jb / (w-e_klcd)
             # [ 2 (ki|lb) - (kb|li) ] δac (ka|lj) δbd R_jb / (w-e_klcd)
 
@@ -401,7 +399,7 @@ class AdcTwoDriver:
                 da = np.matmul(jd.T, ja) / omega_de
                 # [ 2 (ki|ld) - (li|kd) ] R_ad
                 id_id = 2.0 * ov_kl - ov_lk
-                sigma += prefac * np.matmul(id_id, da)
+                sigma += np.matmul(id_id, da)
 
                 # [ 2 (ki|lb) - (kb|li) ] δac (ka|lj) δbd R_jb / (w-e_klcd)
 
@@ -410,7 +408,7 @@ class AdcTwoDriver:
                 ba = np.matmul(rjb.T, ja) / omega_de
                 # [ 2 (ki|lb) - (li|kb) ] R_ab
                 ib_ib = 2.0 * ov_kl - ov_lk
-                sigma += prefac * np.matmul(ib_ib, ba)
+                sigma += np.matmul(ib_ib, ba)
 
             # [ 2 (ac|ld) - (ad|lc) ] δik (bc|ld) δjk R_jb / (w-e_klcd)
             # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
@@ -429,7 +427,7 @@ class AdcTwoDriver:
                 il = np.matmul(ib, lb.T) / omega_de
                 # [ 2 (dl|ca) - (cl|da) ] R_kl
                 la_la = 2.0 * ov_dc - ov_cd
-                sigma += prefac * np.matmul(il, la_la)
+                sigma += np.matmul(il, la_la)
 
                 # [ 2 (ac|jd) - (ad|jc) ] δik (bd|ic) δjl R_jb / (w-e_klcd)
 
@@ -438,7 +436,7 @@ class AdcTwoDriver:
                 ij = np.matmul(ib, rjb.T) / omega_de
                 # [ 2 (dj|ca) - (cj|da) ] R_ij
                 ja_ja = 2.0 * ov_dc - ov_cd
-                sigma += prefac * np.matmul(ij, ja_ja)
+                sigma += np.matmul(ij, ja_ja)
 
             # [ -2 (ji|ld) + (jd|li) ] δac (ba|ld) δjk R_jb / (w-e_klcd)
             # [ -2 (jd|li) + (ji|ld) ] δac (bd|la) δjk R_jb / (w-e_klcd)
@@ -460,7 +458,7 @@ class AdcTwoDriver:
                 ja = np.matmul(rjb, ba) / omega_de
                 # [ -2 (ij|ld) + (il|jd) ] R_ja
                 ij_ij = -2.0 * oo_J + oo_K
-                sigma += prefac * np.matmul(ij_ij, ja)
+                sigma += np.matmul(ij_ij, ja)
 
                 # [ -2 (jd|li) + (ji|ld) ] δac (bd|la) δjk R_jb / (w-e_klcd)
 
@@ -469,7 +467,7 @@ class AdcTwoDriver:
                 ja = np.matmul(rjb, ab.T) / omega_de
                 # [ -2 (il|jd) + (ij|ld) ] R_ja
                 ij_ij = -2.0 * oo_K + oo_J
-                sigma += prefac * np.matmul(ij_ij, ja)
+                sigma += np.matmul(ij_ij, ja)
 
                 # [ -2 (ab|ld) + (ad|lb) ] δik (ij|ld) δbc R_jb / (w-e_klcd)
 
@@ -478,7 +476,7 @@ class AdcTwoDriver:
                 ib = np.matmul(ij, rjb) / omega_de
                 # [ -2 (ba|ld) + (bl|ad) ] R_ib
                 ba_ba = -2.0 * vv_J + vv_K
-                sigma += prefac * np.matmul(ib, ba_ba)
+                sigma += np.matmul(ib, ba_ba)
 
                 # [ -2 (ad|lb) + (ab|ld) ] δik (id|lj) δbc R_jb / (w-e_klcd)
 
@@ -487,7 +485,7 @@ class AdcTwoDriver:
                 ib = np.matmul(ji.T, rjb) / omega_de
                 # [ -2 (bl|ad) + (ba|ld) ] R_ib
                 ba_ba = -2.0 * vv_K + vv_J
-                sigma += prefac * np.matmul(ib, ba_ba)
+                sigma += np.matmul(ib, ba_ba)
 
             sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
