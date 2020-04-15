@@ -3,6 +3,7 @@ import numpy as np
 import unittest
 import h5py
 import os
+import shutil
 
 from gator.mpiutils import mpi_master
 from gator.gatortask import GatorTask
@@ -25,10 +26,17 @@ class TestAdcMatrix(unittest.TestCase):
         task = GatorTask(inpfile, None, MPI.COMM_WORLD)
         task.input_dict['scf']['checkpoint_file'] = scffile
 
+        if task.mpi_rank == mpi_master():
+            bakscffile = scffile + '.bak'
+            shutil.copy(scffile, bakscffile)
+
         scf_drv = ScfRestrictedDriver(task.mpi_comm, task.ostream)
         scf_drv.update_settings(task.input_dict['scf'],
                                 task.input_dict['method_settings'])
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
+
+        if task.mpi_rank == mpi_master():
+            shutil.move(bakscffile, scffile)
 
         adc_drv = AdcMatrixDriver(task.mpi_comm, task.ostream)
         adc_matrix = adc_drv.compute(task.molecule, task.ao_basis,
