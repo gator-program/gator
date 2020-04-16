@@ -8,6 +8,7 @@ from .mp2driver import Mp2Driver
 from .adcdriver import AdcDriver
 from .adconedriver import AdcOneDriver
 from .adctwodriver import AdcTwoDriver
+from .lrsolver import LinearResponseSolver
 
 
 def main():
@@ -28,7 +29,7 @@ def main():
     if 'jobs' in input_dict and 'task' in input_dict['jobs']:
         task_type = input_dict['jobs']['task'].lower()
 
-    if task_type in ['scf', 'mp2', 'adc', 'adc1', 'adc2']:
+    if task_type in ['scf', 'mp2', 'adc', 'adc1', 'adc2', 'adc2_rsp']:
         scf_drv = ScfRestrictedDriver(comm, ostream)
         if 'scf' in input_dict:
             scf_drv.update_settings(input_dict['scf'])
@@ -59,6 +60,14 @@ def main():
         adc_two_dict = input_dict['adc2'] if 'adc2' in input_dict else {}
         adc_two_drv.update_settings(adc_two_dict, scf_drv)
         adc_two_drv.compute(task.molecule, task.ao_basis, scf_drv.scf_tensors)
+
+    if task_type == 'adc2_rsp':
+        adc_rsp_drv = LinearResponseSolver(comm, ostream)
+        adc_rsp_dict = input_dict['adc2'] if 'adc2' in input_dict else {}
+        adc_rsp_drv.update_settings(adc_rsp_dict, scf_drv)
+        adc_rsp_results = adc_rsp_drv.compute(task.molecule, task.ao_basis,
+                                              scf_drv.scf_tensors)
+        adc_rsp_drv.print_rsp_functions(adc_rsp_results['response_functions'])
 
 
 if __name__ == "__main__":
