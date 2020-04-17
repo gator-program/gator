@@ -1,15 +1,17 @@
 from mpi4py import MPI
+import numpy as np
+import time as tm
+
+from veloxchem import BlockDavidsonSolver
 from veloxchem import ExcitationVector
+from veloxchem import MolecularOrbitals
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
 from veloxchem.veloxchemlib import szblock
 from veloxchem import molorb
 from veloxchem import get_qq_type
-from veloxchem import BlockDavidsonSolver
-from veloxchem import MolecularOrbitals
+
 from .mointsdriver import MOIntegralsDriver as MOIntsDriver
-import numpy as np
-import time as tm
 
 
 class AdcTwoDriver:
@@ -204,40 +206,58 @@ class AdcTwoDriver:
         for iteration in range(self.max_iter):
 
             iter_start_time = tm.time()
-            iter_timing = []
 
             sigma_mat = self.compute_sigma(trial_mat, reigs, epsilon,
                                            auxiliary_matrices, mo_indices,
-                                           mo_integrals, iter_timing)
-
-            t0 = tm.time()
+                                           mo_integrals)
 
             if self.rank == mpi_master():
                 self.solver.add_iteration_data(sigma_mat, trial_mat, iteration)
+                self.solver.compute(diag_mat)
+                ritz_vecs = self.solver.ritz_vectors.copy()
+                reigs, rnorms = self.solver.get_eigenvalues()
+            else:
+                ritz_vecs = None
+                reigs = None
+            ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
+            reigs = self.comm.bcast(reigs, root=mpi_master())
+
+            sigma_vecs_from_ritz = self.compute_sigma(ritz_vecs, reigs, epsilon,
+                                                      auxiliary_matrices,
+                                                      mo_indices, mo_integrals)
+
+            # compute discrepancy in eigenvalues
+            if self.rank == mpi_master():
+                eigs_from_ritz = np.array([
+                    np.dot(ritz_vecs[:, i], sigma_vecs_from_ritz[:, i])
+                    for i in range(ritz_vecs.shape[1])
+                ])
+                delta_eigs = np.max(np.abs(reigs - eigs_from_ritz))
+            else:
+                delta_eigs = None
+
+            # print iteration
+            if self.rank == mpi_master():
+                self.print_iter_data(iteration, iter_start_time)
+
+            # check convergence
+            self.check_convergence(iteration, delta_eigs)
+            if self.is_converged:
+                break
+
+            # update the trial-sigma pairs in the solver and get new trial_mat
+            # and eigenvalues for the next round
+            if self.rank == mpi_master():
+                self.solver.neigenpairs = ritz_vecs.shape[1]
+                self.solver.trial_matrices = ritz_vecs.copy()
+                self.solver.sigma_matrices = sigma_vecs_from_ritz.copy()
                 trial_mat = self.solver.compute(diag_mat)
                 reigs, rnorms = self.solver.get_eigenvalues()
             else:
                 trial_mat = None
-                reigs = []
-
-            iter_timing.append(('computing new trial vectors', tm.time() - t0))
-            t0 = tm.time()
-
+                reigs = None
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             reigs = self.comm.bcast(reigs, root=mpi_master())
-
-            iter_timing.append(
-                ('communicating new trial vectors', tm.time() - t0))
-
-            if self.rank == mpi_master():
-                self.print_iter_data(iteration, iter_start_time, iter_timing)
-
-            # check convergence
-
-            self.check_convergence(iteration)
-
-            if self.is_converged:
-                break
 
         # print converged excited states
 
@@ -280,14 +300,8 @@ class AdcTwoDriver:
 
         return xA_ab, xB_ij
 
-    def compute_sigma(self,
-                      trial_mat,
-                      reigs,
-                      epsilon,
-                      auxiliary_matrices,
-                      mo_indices,
-                      mo_integrals,
-                      iter_timing=None):
+    def compute_sigma(self, trial_mat, reigs, epsilon, auxiliary_matrices,
+                      mo_indices, mo_integrals):
 
         # orbital energies
 
@@ -304,9 +318,6 @@ class AdcTwoDriver:
         fij = auxiliary_matrices['fij']
         xA_ab = auxiliary_matrices['xA_ab']
         xB_ij = auxiliary_matrices['xB_ij']
-
-        if iter_timing is not None:
-            t0 = tm.time()
 
         # precompute kc vectors for 2nd-order contribution (term C)
 
@@ -325,15 +336,7 @@ class AdcTwoDriver:
                 kc1[k, :] += np.dot(cb_bc, rjb[j, :])
                 kc2[k, :] += np.dot(cb_bc / de, rjb[j, :])
 
-        if iter_timing is not None:
-            iter_timing.append(('computing kc vectors', tm.time() - t0))
-            t0 = tm.time()
-
         kc = self.comm.allreduce(kc, op=MPI.SUM)
-
-        if iter_timing is not None:
-            iter_timing.append(('communicating kc vectors', tm.time() - t0))
-            t0 = tm.time()
 
         # compute sigma vectors
 
@@ -489,14 +492,7 @@ class AdcTwoDriver:
 
             sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
 
-        if iter_timing is not None:
-            iter_timing.append(('computing sigma vectors', tm.time() - t0))
-            t0 = tm.time()
-
         sigma_mat = self.comm.reduce(sigma_mat, op=MPI.SUM, root=mpi_master())
-
-        if iter_timing is not None:
-            iter_timing.append(('communicating sigma vectors', tm.time() - t0))
 
         return sigma_mat
 
@@ -563,7 +559,7 @@ class AdcTwoDriver:
 
         return (None, [], [])
 
-    def check_convergence(self, iteration):
+    def check_convergence(self, iteration, delta_eigs):
         """
         Checks convergence of excitation energies and set convergence flag.
 
@@ -574,22 +570,22 @@ class AdcTwoDriver:
         self.cur_iter = iteration
 
         if self.rank == mpi_master():
-            self.is_converged = self.solver.check_convergence(self.conv_thresh)
+            solver_converged = self.solver.check_convergence(self.conv_thresh)
+            eigs_converged = (delta_eigs < max(1.0e-12, self.conv_thresh**2))
+            self.is_converged = (solver_converged and eigs_converged)
         else:
             self.is_converged = False
 
         self.is_converged = self.comm.bcast(self.is_converged,
                                             root=mpi_master())
 
-    def print_iter_data(self, iteration, iter_start_time, iter_timing):
+    def print_iter_data(self, iteration, iter_start_time):
         """Prints excited states solver iteration data to output stream.
 
         :param iteration:
             The current excited states solver iteration.
         :param iter_start_time:
             The starting time of the iteration.
-        :param iter_timing:
-            A list of tuple containing individual timings.
         """
 
         # iteration header
@@ -617,8 +613,6 @@ class AdcTwoDriver:
         self.ostream.print_info(
             'Time spent in this iteration: {:.2f} sec.'.format(tm.time() -
                                                                iter_start_time))
-        for t in iter_timing:
-            self.ostream.print_info('  {:<35s} :   {:.2f} sec'.format(*t))
         self.ostream.print_blank()
         self.ostream.flush()
 
@@ -643,7 +637,7 @@ class AdcTwoDriver:
         self.ostream.print_blank()
         self.ostream.print_blank()
         if self.is_converged:
-            valstr = "ADC(2) excited states [SS block only]"
+            valstr = "ADC(2) excited states"
             self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_header(('-' * len(valstr)).ljust(92))
             for s, e in enumerate(reigs):
