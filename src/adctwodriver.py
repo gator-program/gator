@@ -3,15 +3,11 @@ import numpy as np
 import time as tm
 
 from veloxchem import BlockDavidsonSolver
-from veloxchem import ExcitationVector
-from veloxchem import MolecularOrbitals
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
-from veloxchem.veloxchemlib import szblock
-from veloxchem import molorb
 from veloxchem import get_qq_type
 
-from .mointsdriver import MOIntegralsDriver as MOIntsDriver
+from .mointsdriver import MOIntegralsDriver
 
 
 class AdcTwoDriver:
@@ -118,11 +114,9 @@ class AdcTwoDriver:
         if self.rank == mpi_master():
             mo = scf_tensors['C']
             ea = scf_tensors['E']
-            mol_orbs = MolecularOrbitals([mo], [ea], molorb.rest)
         else:
             mo = None
             ea = None
-            mol_orbs = MolecularOrbitals()
         mo = self.comm.bcast(mo, root=mpi_master())
         ea = self.comm.bcast(ea, root=mpi_master())
 
@@ -163,18 +157,22 @@ class AdcTwoDriver:
 
         start_time = tm.time()
 
-        # set up trial excitation vectors on master node
+        # set up trial excitation vectors
 
-        diag_mat, trial_vecs, reigs = self.gen_trial_vectors(mol_orbs, molecule)
+        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
 
-        if self.rank == mpi_master():
-            trial_mat = trial_vecs[0].zvector_to_numpy()
-            for vec in trial_vecs[1:]:
-                trial_mat = np.hstack((trial_mat, vec.zvector_to_numpy()))
-        else:
-            trial_mat = None
-        trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
-        reigs = self.comm.bcast(reigs, root=mpi_master())
+        exci_list = [(evir[a] - eocc[nocc - 1 - i], nocc - 1 - i, a)
+                     for i in range(min(self.nstates, nocc))
+                     for a in range(min(self.nstates, nvir))]
+
+        exci_list = sorted(exci_list)[:self.nstates]
+
+        trial_mat = np.zeros((nocc * nvir, len(exci_list)))
+        reigs = np.zeros(len(exci_list))
+        for ind, (delta_e, i, a) in enumerate(exci_list):
+            trial_ov = trial_mat[:, ind].reshape(nocc, nvir)
+            trial_ov[i, a] = 1.0
+            reigs[ind] = delta_e
 
         # block Davidson algorithm setup
 
@@ -182,7 +180,7 @@ class AdcTwoDriver:
 
         # MO integrals
 
-        moints_drv = MOIntsDriver(self.comm, self.ostream)
+        moints_drv = MOIntegralsDriver(self.comm, self.ostream)
         moints_drv.update_settings({
             'qq_type': self.qq_type,
             'eri_thresh': self.eri_thresh
@@ -232,18 +230,9 @@ class AdcTwoDriver:
                     np.dot(ritz_vecs[:, i], sigma_vecs_from_ritz[:, i])
                     for i in range(ritz_vecs.shape[1])
                 ])
-                delta_eigs = np.max(np.abs(reigs - eigs_from_ritz))
+                delta_eigs = np.abs(reigs - eigs_from_ritz)
             else:
                 delta_eigs = None
-
-            # print iteration
-            if self.rank == mpi_master():
-                self.print_iter_data(iteration, iter_start_time)
-
-            # check convergence
-            self.check_convergence(iteration, delta_eigs)
-            if self.is_converged:
-                break
 
             # update the trial-sigma pairs in the solver and get new trial_mat
             # and eigenvalues for the next round
@@ -255,9 +244,18 @@ class AdcTwoDriver:
                 reigs, rnorms = self.solver.get_eigenvalues()
             else:
                 trial_mat = None
-                reigs = None
+                reigs, rnorms = None, None
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             reigs = self.comm.bcast(reigs, root=mpi_master())
+
+            # print iteration
+            if self.rank == mpi_master():
+                self.print_iter_data(iteration, iter_start_time)
+
+            # check convergence
+            self.check_convergence(iteration, rnorms, delta_eigs)
+            if self.is_converged:
+                break
 
         # print converged excited states
 
@@ -526,40 +524,7 @@ class AdcTwoDriver:
 
         self.ostream.flush()
 
-    def gen_trial_vectors(self, mol_orbs, molecule):
-        """Generates set of trial vectors.
-
-        :param mol_orbs:
-            The molecular orbitals.
-        :param molecule:
-            The molecule.
-        :return:
-            The set of trial vectors.
-        """
-
-        if self.rank == mpi_master():
-
-            nocc = molecule.number_of_electrons() // 2
-            norb = mol_orbs.number_mos()
-
-            zvec = ExcitationVector(szblock.aa, 0, nocc, nocc, norb, True)
-            exci_list = zvec.small_energy_identifiers(mol_orbs, self.nstates)
-
-            diag_mat = zvec.diagonal_to_numpy(mol_orbs)
-
-            trial_vecs = []
-            reigs = []
-            for exci_ind in exci_list:
-                trial_vecs.append(
-                    ExcitationVector(szblock.aa, 0, nocc, nocc, norb, True))
-                trial_vecs[-1].set_zcoefficient(1.0, exci_ind)
-                reigs.append(diag_mat[exci_ind][0])
-
-            return (diag_mat, trial_vecs, reigs)
-
-        return (None, [], [])
-
-    def check_convergence(self, iteration, delta_eigs):
+    def check_convergence(self, iteration, rnorms, delta_eigs):
         """
         Checks convergence of excitation energies and set convergence flag.
 
@@ -570,9 +535,10 @@ class AdcTwoDriver:
         self.cur_iter = iteration
 
         if self.rank == mpi_master():
-            solver_converged = self.solver.check_convergence(self.conv_thresh)
-            eigs_converged = (delta_eigs < max(1.0e-12, self.conv_thresh**2))
-            self.is_converged = (solver_converged and eigs_converged)
+            max_norm = np.max(rnorms[:self.nstates])
+            max_ediff = np.max(delta_eigs[:self.nstates])
+            self.is_converged = (max_norm < self.conv_thresh and
+                                 max_ediff < max(1.0e-12, self.conv_thresh**2))
         else:
             self.is_converged = False
 
@@ -602,7 +568,7 @@ class AdcTwoDriver:
         # excited states information
 
         reigs, rnorms = self.solver.get_eigenvalues()
-        for i in range(reigs.shape[0]):
+        for i in range(reigs[:self.nstates].shape[0]):
             exec_str = "State {:2d}: {:5.8f} ".format(i + 1, reigs[i])
             exec_str += "au Residual Norm: {:3.8f}".format(rnorms[i])
             self.ostream.print_header(exec_str.ljust(84))
@@ -640,7 +606,7 @@ class AdcTwoDriver:
             valstr = "ADC(2) excited states"
             self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_header(('-' * len(valstr)).ljust(92))
-            for s, e in enumerate(reigs):
+            for s, e in enumerate(reigs[:self.nstates]):
                 valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
