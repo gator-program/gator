@@ -8,6 +8,7 @@ from veloxchem import hartree_in_ev
 from veloxchem import get_qq_type
 
 from .mointsdriver import MOIntegralsDriver
+from .adconedriver import AdcOneDriver
 
 
 class AdcTwoDriver:
@@ -111,6 +112,10 @@ class AdcTwoDriver:
             A dictionary containing excitation energies.
         """
 
+        start_time = tm.time()
+
+        # orbitals and orbital energies
+
         if self.rank == mpi_master():
             mo = scf_tensors['C']
             ea = scf_tensors['E']
@@ -138,13 +143,6 @@ class AdcTwoDriver:
         }
 
         if self.rank == mpi_master():
-            self.print_header()
-            self.ostream.print_info(
-                'Number of occupied orbitals: {:d}'.format(nocc))
-            self.ostream.print_info(
-                'Number of virtual orbitals: {:d}'.format(nvir))
-            self.ostream.print_blank()
-
             fa = scf_tensors['F'][0]
             fmo = np.matmul(mo.T, np.matmul(fa, mo))
             fab = fmo[nocc:, nocc:]
@@ -152,31 +150,6 @@ class AdcTwoDriver:
         else:
             fab = None
             fij = None
-
-        # set start time
-
-        start_time = tm.time()
-
-        # set up trial excitation vectors
-
-        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
-
-        exci_list = [(evir[a] - eocc[nocc - 1 - i], nocc - 1 - i, a)
-                     for i in range(min(self.nstates, nocc))
-                     for a in range(min(self.nstates, nvir))]
-
-        exci_list = sorted(exci_list)[:self.nstates]
-
-        trial_mat = np.zeros((nocc * nvir, len(exci_list)))
-        reigs = np.zeros(len(exci_list))
-        for ind, (delta_e, i, a) in enumerate(exci_list):
-            trial_ov = trial_mat[:, ind].reshape(nocc, nvir)
-            trial_ov[i, a] = 1.0
-            reigs[ind] = delta_e
-
-        # block Davidson algorithm setup
-
-        self.solver = BlockDavidsonSolver()
 
         # MO integrals
 
@@ -199,7 +172,43 @@ class AdcTwoDriver:
             'xB_ij': xB_ij,
         }
 
-        # start iterations
+        # get initial guess from ADC(1)
+
+        adc_one_drv = AdcOneDriver(self.comm, self.ostream)
+        adc_one_drv.update_settings({
+            'nstates': self.nstates,
+            'eri_thresh': self.eri_thresh,
+            'qq_type': self.qq_type
+        })
+        adc_one_results = adc_one_drv.compute(molecule, basis, scf_tensors,
+                                              mo_indices, mo_integrals)
+
+        # set up trial excitation vectors
+
+        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
+
+        if self.rank == mpi_master():
+            trial_mat = adc_one_results['eigenvectors'].copy()
+            reigs = adc_one_results['eigenvalues'].copy()
+        else:
+            trial_mat = None
+            reigs = None
+        trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
+        reigs = self.comm.bcast(reigs, root=mpi_master())
+
+        # block Davidson algorithm setup
+
+        self.solver = BlockDavidsonSolver()
+
+        # start ADC(2)
+
+        if self.rank == mpi_master():
+            self.print_header()
+            self.ostream.print_info(
+                'Number of occupied orbitals: {:d}'.format(nocc))
+            self.ostream.print_info(
+                'Number of virtual orbitals: {:d}'.format(nvir))
+            self.ostream.print_blank()
 
         for iteration in range(self.max_iter):
 

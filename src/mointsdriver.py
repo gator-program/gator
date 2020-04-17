@@ -9,7 +9,6 @@ from veloxchem import mpi_master
 from veloxchem import denmat
 from veloxchem.veloxchemlib import fockmat
 from veloxchem import get_qq_scheme
-from veloxchem import get_qq_type
 
 
 class MOIntegralsDriver:
@@ -79,6 +78,9 @@ class MOIntegralsDriver:
         :return:
             A dictionary of indices and MO integrals.
         """
+
+        if self.rank == mpi_master():
+            self.print_header()
 
         # subcommunicators
 
@@ -424,16 +426,15 @@ class MOIntegralsDriver:
 
         title = 'MO Integrals Driver Setup'
         self.ostream.print_header(title)
-        self.ostream.print_header('-' * (len(title) + 2))
+        self.ostream.print_header('=' * (len(title) + 2))
         self.ostream.print_blank()
 
         str_width = 60
-        cur_str = 'ERI screening scheme      : ' + get_qq_type(self.qq_type)
+        cur_str = 'ERI screening scheme        : {:s}'.format(self.qq_type)
         self.ostream.print_header(cur_str.ljust(str_width))
-        cur_str = 'ERI Screening Threshold   : ' + \
-            '{:.1e}'.format(self.eri_thresh)
+        cur_str = 'ERI Screening Threshold     : {:.1e}'.format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))
-        cur_str = "Size of Fock Matrices Batch  : " + str(self.batch_size)
+        cur_str = 'Batch Size of Fock Matrices : {:d}'.format(self.batch_size)
         self.ostream.print_header(cur_str.ljust(str_width))
         self.ostream.print_blank()
         self.ostream.flush()
