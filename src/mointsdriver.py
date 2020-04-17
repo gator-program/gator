@@ -1,15 +1,15 @@
+import numpy as np
+import time as tm
+
 from veloxchem import AODensityMatrix
 from veloxchem import AOFockMatrix
 from veloxchem import ElectronRepulsionIntegralsDriver
+from veloxchem import SubCommunicators
 from veloxchem import mpi_master
 from veloxchem import denmat
 from veloxchem.veloxchemlib import fockmat
-from veloxchem import SubCommunicators
 from veloxchem import get_qq_scheme
 from veloxchem import get_qq_type
-from veloxchem import assert_msg_critical
-import numpy as np
-import time as tm
 
 
 class MOIntegralsDriver:
@@ -28,7 +28,6 @@ class MOIntegralsDriver:
         - qq_type: The electron repulsion integrals screening scheme.
         - eri_thresh: The electron repulsion integrals screening threshold.
         - batch_size: The number of Fock matrices in each batch.
-        - comm_size: The size of each subcommunicator.
         - ostream: The output stream.
     """
 
@@ -42,16 +41,13 @@ class MOIntegralsDriver:
         self.rank = self.comm.Get_rank()
         self.nodes = self.comm.Get_size()
 
+        # output stream
+        self.ostream = ostream
+
         # screening scheme and batch size for Fock build
         self.qq_type = 'QQ_DEN'
         self.eri_thresh = 1.0e-12
         self.batch_size = 100
-
-        # size of subcommunicator
-        self.comm_size = 1
-
-        # output stream
-        self.ostream = ostream
 
     def update_settings(self, settings):
         """
@@ -65,15 +61,10 @@ class MOIntegralsDriver:
             self.qq_type = settings['qq_type'].upper()
         if 'eri_thresh' in settings:
             self.eri_thresh = float(settings['eri_thresh'])
-
         if 'batch_size' in settings:
             self.batch_size = int(settings['batch_size'])
-        if 'comm_size' in settings:
-            self.comm_size = int(settings['comm_size'])
-            if self.nodes % self.comm_size != 0:
-                self.comm_size = 1
 
-    def compute(self, molecule, basis, scf_tensors):
+    def compute(self, molecule, basis, scf_tensors, blocks=['oo', 'vv', 'ov']):
         """
         Performs MO integral calculation.
 
@@ -83,20 +74,15 @@ class MOIntegralsDriver:
             The AO basis set.
         :param scf_tensors:
             The dictionary of tensors from converged SCF wavefunction.
+        :param blocks:
+            The MO integral blocks (oo, vv, ov).
         :return:
             A dictionary of indices and MO integrals.
         """
 
         # subcommunicators
 
-        if self.rank == mpi_master():
-            assert_msg_critical(
-                self.nodes % self.comm_size == 0,
-                'MO integral driver: invalid size of subcommunicator')
-
-        # self.print_header()
-
-        grps = [p // self.comm_size for p in range(self.nodes)]
+        grps = [p for p in range(self.nodes)]
         subcomm = SubCommunicators(self.comm, grps)
         local_comm = subcomm.local_comm
         cross_comm = subcomm.cross_comm
@@ -131,256 +117,269 @@ class MOIntegralsDriver:
 
         # compute OO blocks: (OO|VV), (OV|OV), (OO|OV)
         #                     **       *  *     *  *
+        if 'oo' in blocks:
 
-        start_time = tm.time()
+            start_time = tm.time()
 
-        if local_master:
-            # only computes ij pairs where i <= j
-            mo_ints_ids = [
-                (i, j) for i in range(nocc) for j in range(i + 1, nocc)
-            ] + [(i, i) for i in range(nocc)]
+            if local_master:
+                # only computes ij pairs where i <= j
+                mo_ints_ids = [
+                    (i, j) for i in range(nocc) for j in range(i + 1, nocc)
+                ] + [(i, i) for i in range(nocc)]
 
-            oo_indices = mo_ints_ids[cross_rank::cross_nodes]
-            oo_count = len(oo_indices)
+                oo_indices = mo_ints_ids[cross_rank::cross_nodes]
+                oo_count = len(oo_indices)
 
-            chem_oovv_J = []
-            chem_ovov_K = []
-            chem_ooov_K = []
+                chem_oovv_J = []
+                chem_ovov_K = []
+                chem_ooov_K = []
 
-            num_batches = oo_count // self.batch_size
-            if oo_count % self.batch_size != 0:
-                num_batches += 1
-        else:
-            num_batches = None
+                num_batches = oo_count // self.batch_size
+                if oo_count % self.batch_size != 0:
+                    num_batches += 1
+            else:
+                num_batches = None
 
-        num_batches = local_comm.bcast(num_batches, root=mpi_master())
+            num_batches = local_comm.bcast(num_batches, root=mpi_master())
 
-        valstr = 'Processing Fock builds for the OO block... '
-        self.ostream.print_info(valstr)
-
-        for batch_ind in range(num_batches):
-
-            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+            valstr = 'Processing Fock builds for the OO block... '
             self.ostream.print_info(valstr)
-            self.ostream.flush()
 
-            dens = self.form_densities(oo_indices, batch_ind, nocc, nocc,
-                                       mo_occ, mo_occ, local_comm)
+            for batch_ind in range(num_batches):
 
-            fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
-                                  screening, eri_drv, local_comm)
+                valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+                self.ostream.print_info(valstr)
+                self.ostream.flush()
+
+                dens = self.form_densities(oo_indices, batch_ind, nocc, nocc,
+                                           mo_occ, mo_occ, local_comm)
+
+                fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
+                                      screening, eri_drv, local_comm)
+
+                if local_master:
+                    for i in range(fock.number_of_fock_matrices()):
+                        f_ao = fock.alpha_to_numpy(i)
+                        f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
+                        chem_oovv_J.append(f_vv)
+                        pair = oo_indices[i + batch_ind * self.batch_size]
+                        if pair[0] != pair[1]:
+                            chem_oovv_J.append(f_vv.T)
+
+                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
+                                      screening, eri_drv, local_comm)
+
+                if local_master:
+                    for i in range(fock.number_of_fock_matrices()):
+                        f_ao = fock.alpha_to_numpy(i)
+                        f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
+                        f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
+                        chem_ovov_K.append(f_vv)
+                        chem_ooov_K.append(f_ov)
+                        pair = oo_indices[i + batch_ind * self.batch_size]
+                        if pair[0] != pair[1]:
+                            f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                            chem_ovov_K.append(f_vv.T)
+                            chem_ooov_K.append(f_vo.T)
 
             if local_master:
-                for i in range(fock.number_of_fock_matrices()):
-                    f_ao = fock.alpha_to_numpy(i)
-                    f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    chem_oovv_J.append(f_vv)
-                    pair = oo_indices[i + batch_ind * self.batch_size]
-                    if pair[0] != pair[1]:
-                        chem_oovv_J.append(f_vv.T)
+                dt = tm.time() - start_time
+                dt = cross_comm.gather(dt, root=mpi_master())
+                load_imb = 0.0
+                if global_master:
+                    load_imb = 1.0 - min(dt) / max(dt)
 
-            fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                  screening, eri_drv, local_comm)
+            # make full ij pairs
+            oo_indices_full = []
+            for i, j in oo_indices:
+                oo_indices_full.append((i, j))
+                if i != j:
+                    oo_indices_full.append((j, i))
+            oo_indices = oo_indices_full
 
-            if local_master:
-                for i in range(fock.number_of_fock_matrices()):
-                    f_ao = fock.alpha_to_numpy(i)
-                    f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    chem_ovov_K.append(f_vv)
-                    chem_ooov_K.append(f_ov)
-                    pair = oo_indices[i + batch_ind * self.batch_size]
-                    if pair[0] != pair[1]:
-                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
-                        chem_ovov_K.append(f_vv.T)
-                        chem_ooov_K.append(f_vo.T)
-
-        if local_master:
-            dt = tm.time() - start_time
-            dt = cross_comm.gather(dt, root=mpi_master())
-            load_imb = 0.0
-            if global_master:
-                load_imb = 1.0 - min(dt) / max(dt)
-
-        # make full ij pairs
-        oo_indices_full = []
-        for i, j in oo_indices:
-            oo_indices_full.append((i, j))
-            if i != j:
-                oo_indices_full.append((j, i))
-        oo_indices = oo_indices_full
-
-        self.ostream.print_blank()
-        valstr = 'Integrals transformation for the OO block done in '
-        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
-        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
-        self.ostream.print_info(valstr)
-        self.ostream.print_blank()
+            self.ostream.print_blank()
+            valstr = 'Integrals transformation for the OO block done in '
+            valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+            valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
+            self.ostream.print_info(valstr)
+            self.ostream.print_blank()
 
         # compute VV blocks: (VO|VO), (VO|VV)
         #                     *  *     *  *
 
-        start_time = tm.time()
+        if 'vv' in blocks:
 
-        if local_master:
-            # only computes ab pairs where a <= b
-            mo_ints_ids = [
-                (a, b) for a in range(nvir) for b in range(a + 1, nvir)
-            ] + [(a, a) for a in range(nvir)]
-
-            vv_indices = mo_ints_ids[cross_rank::cross_nodes]
-            vv_count = len(vv_indices)
-
-            chem_vovo_K = []
-            chem_vovv_K = []
-
-            num_batches = vv_count // self.batch_size
-            if vv_count % self.batch_size != 0:
-                num_batches += 1
-        else:
-            num_batches = None
-
-        num_batches = local_comm.bcast(num_batches, root=mpi_master())
-
-        valstr = 'Processing Fock builds for the VV block... '
-        self.ostream.print_info(valstr)
-
-        for batch_ind in range(num_batches):
-
-            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
-            self.ostream.print_info(valstr)
-            self.ostream.flush()
-
-            dens = self.form_densities(vv_indices, batch_ind, nvir, nvir,
-                                       mo_vir, mo_vir, local_comm)
-
-            fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                  screening, eri_drv, local_comm)
+            start_time = tm.time()
 
             if local_master:
-                for i in range(fock.number_of_fock_matrices()):
-                    f_ao = fock.alpha_to_numpy(i)
-                    f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
-                    f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
-                    chem_vovo_K.append(f_oo)
-                    chem_vovv_K.append(f_ov)
-                    pair = vv_indices[i + batch_ind * self.batch_size]
-                    if pair[0] != pair[1]:
-                        f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
-                        chem_vovo_K.append(f_oo.T)
-                        chem_vovv_K.append(f_vo.T)
+                # only computes ab pairs where a <= b
+                mo_ints_ids = [
+                    (a, b) for a in range(nvir) for b in range(a + 1, nvir)
+                ] + [(a, a) for a in range(nvir)]
 
-        if local_master:
-            dt = tm.time() - start_time
-            dt = cross_comm.gather(dt, root=mpi_master())
-            load_imb = 0.0
-            if global_master:
-                load_imb = 1.0 - min(dt) / max(dt)
+                vv_indices = mo_ints_ids[cross_rank::cross_nodes]
+                vv_count = len(vv_indices)
 
-        # make full ab pairs
-        vv_indices_full = []
-        for a, b in vv_indices:
-            vv_indices_full.append((a, b))
-            if a != b:
-                vv_indices_full.append((b, a))
-        vv_indices = vv_indices_full
+                chem_vovo_K = []
+                chem_vovv_K = []
 
-        self.ostream.print_blank()
-        valstr = 'Integrals transformation for the VV block done in '
-        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
-        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
-        self.ostream.print_info(valstr)
-        self.ostream.print_blank()
+                num_batches = vv_count // self.batch_size
+                if vv_count % self.batch_size != 0:
+                    num_batches += 1
+            else:
+                num_batches = None
+
+            num_batches = local_comm.bcast(num_batches, root=mpi_master())
+
+            valstr = 'Processing Fock builds for the VV block... '
+            self.ostream.print_info(valstr)
+
+            for batch_ind in range(num_batches):
+
+                valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+                self.ostream.print_info(valstr)
+                self.ostream.flush()
+
+                dens = self.form_densities(vv_indices, batch_ind, nvir, nvir,
+                                           mo_vir, mo_vir, local_comm)
+
+                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
+                                      screening, eri_drv, local_comm)
+
+                if local_master:
+                    for i in range(fock.number_of_fock_matrices()):
+                        f_ao = fock.alpha_to_numpy(i)
+                        f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
+                        f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
+                        chem_vovo_K.append(f_oo)
+                        chem_vovv_K.append(f_ov)
+                        pair = vv_indices[i + batch_ind * self.batch_size]
+                        if pair[0] != pair[1]:
+                            f_vo = np.linalg.multi_dot([mo_vir.T, f_ao, mo_occ])
+                            chem_vovo_K.append(f_oo.T)
+                            chem_vovv_K.append(f_vo.T)
+
+            if local_master:
+                dt = tm.time() - start_time
+                dt = cross_comm.gather(dt, root=mpi_master())
+                load_imb = 0.0
+                if global_master:
+                    load_imb = 1.0 - min(dt) / max(dt)
+
+            # make full ab pairs
+            vv_indices_full = []
+            for a, b in vv_indices:
+                vv_indices_full.append((a, b))
+                if a != b:
+                    vv_indices_full.append((b, a))
+            vv_indices = vv_indices_full
+
+            self.ostream.print_blank()
+            valstr = 'Integrals transformation for the VV block done in '
+            valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+            valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
+            self.ostream.print_info(valstr)
+            self.ostream.print_blank()
 
         # compute OV blocks: (OV|OO), (OV|VV), (OO|VO), (OV|VV)
         #                     **       **       *  *     *  *
 
-        start_time = tm.time()
+        if 'ov' in blocks:
 
-        if local_master:
-            mo_ints_ids = [(i, a) for i in range(nocc) for a in range(nvir)]
+            start_time = tm.time()
 
-            ov_indices = mo_ints_ids[cross_rank::cross_nodes]
-            ov_count = len(ov_indices)
+            if local_master:
+                mo_ints_ids = [(i, a) for i in range(nocc) for a in range(nvir)]
 
-            chem_ovoo_J = []
-            chem_ovvv_J = []
-            chem_oovo_K = []
-            chem_ovvv_K = []
+                ov_indices = mo_ints_ids[cross_rank::cross_nodes]
+                ov_count = len(ov_indices)
 
-            num_batches = ov_count // self.batch_size
-            if ov_count % self.batch_size != 0:
-                num_batches += 1
-        else:
-            num_batches = None
+                chem_ovoo_J = []
+                chem_ovvv_J = []
+                chem_oovo_K = []
+                chem_ovvv_K = []
 
-        num_batches = local_comm.bcast(num_batches, root=mpi_master())
+                num_batches = ov_count // self.batch_size
+                if ov_count % self.batch_size != 0:
+                    num_batches += 1
+            else:
+                num_batches = None
 
-        valstr = 'Processing Fock builds for the OV block... '
-        self.ostream.print_info(valstr)
+            num_batches = local_comm.bcast(num_batches, root=mpi_master())
 
-        for batch_ind in range(num_batches):
-
-            valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+            valstr = 'Processing Fock builds for the OV block... '
             self.ostream.print_info(valstr)
-            self.ostream.flush()
 
-            dens = self.form_densities(ov_indices, batch_ind, nocc, nvir,
-                                       mo_occ, mo_vir, local_comm)
+            for batch_ind in range(num_batches):
 
-            fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
-                                  screening, eri_drv, local_comm)
+                valstr = '  batch {}/{}'.format(batch_ind + 1, num_batches)
+                self.ostream.print_info(valstr)
+                self.ostream.flush()
+
+                dens = self.form_densities(ov_indices, batch_ind, nocc, nvir,
+                                           mo_occ, mo_vir, local_comm)
+
+                fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
+                                      screening, eri_drv, local_comm)
+
+                if local_master:
+                    for i in range(fock.number_of_fock_matrices()):
+                        f_ao = fock.alpha_to_numpy(i)
+                        f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
+                        f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
+                        chem_ovoo_J.append(f_oo)
+                        chem_ovvv_J.append(f_vv)
+
+                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
+                                      screening, eri_drv, local_comm)
+
+                if local_master:
+                    for i in range(fock.number_of_fock_matrices()):
+                        f_ao = fock.alpha_to_numpy(i)
+                        f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
+                        f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
+                        chem_oovo_K.append(f_oo)
+                        chem_ovvv_K.append(f_vv)
 
             if local_master:
-                for i in range(fock.number_of_fock_matrices()):
-                    f_ao = fock.alpha_to_numpy(i)
-                    f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
-                    f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    chem_ovoo_J.append(f_oo)
-                    chem_ovvv_J.append(f_vv)
+                dt = tm.time() - start_time
+                dt = cross_comm.gather(dt, root=mpi_master())
+                load_imb = 0.0
+                if global_master:
+                    load_imb = 1.0 - min(dt) / max(dt)
 
-            fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                  screening, eri_drv, local_comm)
+            self.ostream.print_blank()
+            valstr = 'Integrals transformation for the OV block done in '
+            valstr += '{:.2f} sec.'.format(tm.time() - start_time)
+            valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
+            self.ostream.print_info(valstr)
+            self.ostream.print_blank()
 
-            if local_master:
-                for i in range(fock.number_of_fock_matrices()):
-                    f_ao = fock.alpha_to_numpy(i)
-                    f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
-                    f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
-                    chem_oovo_K.append(f_oo)
-                    chem_ovvv_K.append(f_vv)
+        # indices and integrals
 
-        if local_master:
-            dt = tm.time() - start_time
-            dt = cross_comm.gather(dt, root=mpi_master())
-            load_imb = 0.0
-            if global_master:
-                load_imb = 1.0 - min(dt) / max(dt)
+        indices = {}
 
-        self.ostream.print_blank()
-        valstr = 'Integrals transformation for the OV block done in '
-        valstr += '{:.2f} sec.'.format(tm.time() - start_time)
-        valstr += ' Load imb.: {:.1f} %'.format(load_imb * 100.0)
-        self.ostream.print_info(valstr)
-        self.ostream.print_blank()
+        if 'oo' in blocks:
+            indices['oo'] = oo_indices
+        if 'vv' in blocks:
+            indices['vv'] = vv_indices
+        if 'ov' in blocks:
+            indices['ov'] = ov_indices
 
-        indices = {
-            'oo': oo_indices,
-            'vv': vv_indices,
-            'ov': ov_indices,
-        }
+        integrals = {}
 
-        integrals = {
-            'chem_oovv_J': chem_oovv_J,
-            'chem_ovov_K': chem_ovov_K,
-            'chem_ooov_K': chem_ooov_K,
-            'chem_vovo_K': chem_vovo_K,
-            'chem_vovv_K': chem_vovv_K,
-            'chem_ovoo_J': chem_ovoo_J,
-            'chem_ovvv_J': chem_ovvv_J,
-            'chem_oovo_K': chem_oovo_K,
-            'chem_ovvv_K': chem_ovvv_K,
-        }
+        if 'oo' in blocks:
+            integrals['chem_oovv_J'] = chem_oovv_J
+            integrals['chem_ovov_K'] = chem_ovov_K
+            integrals['chem_ooov_K'] = chem_ooov_K
+        if 'vv' in blocks:
+            integrals['chem_vovo_K'] = chem_vovo_K
+            integrals['chem_vovv_K'] = chem_vovv_K
+        if 'ov' in blocks:
+            integrals['chem_ovoo_J'] = chem_ovoo_J
+            integrals['chem_ovvv_J'] = chem_ovvv_J
+            integrals['chem_oovo_K'] = chem_oovo_K
+            integrals['chem_ovvv_K'] = chem_ovvv_K
 
         return indices, integrals
 
@@ -435,9 +434,6 @@ class MOIntegralsDriver:
             '{:.1e}'.format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = "Size of Fock Matrices Batch  : " + str(self.batch_size)
-        self.ostream.print_header(cur_str.ljust(str_width))
-        cur_str = "Number of Subcommunicators   : "
-        cur_str += str(self.nodes // self.comm_size)
         self.ostream.print_header(cur_str.ljust(str_width))
         self.ostream.print_blank()
         self.ostream.flush()

@@ -1,15 +1,13 @@
 from mpi4py import MPI
+import numpy as np
+import time as tm
+
 from veloxchem import BlockDavidsonSolver
-from veloxchem import ExcitationVector
-from veloxchem import MOIntegralsDriver
-from veloxchem import MolecularOrbitals
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
 from veloxchem import get_qq_type
-from veloxchem.veloxchemlib import szblock
-from veloxchem import molorb
-import numpy as np
-import time as tm
+
+from .mointsdriver import MOIntegralsDriver
 
 
 class AdcOneDriver:
@@ -99,7 +97,12 @@ class AdcOneDriver:
             # inherit from SCF
             self.qq_type = scf_drv.qq_type
 
-    def compute(self, molecule, basis, scf_tensors):
+    def compute(self,
+                molecule,
+                basis,
+                scf_tensors,
+                mo_indices=None,
+                mo_integrals=None):
         """
         Performs ADC(1) calculation.
 
@@ -116,36 +119,65 @@ class AdcOneDriver:
         if self.rank == mpi_master():
             mo = scf_tensors['C']
             ea = scf_tensors['E']
-            mol_orbs = MolecularOrbitals([mo], [ea], molorb.rest)
         else:
-            mol_orbs = MolecularOrbitals()
             mo = None
+            ea = None
 
         mo = self.comm.bcast(mo, root=mpi_master())
+        ea = self.comm.bcast(ea, root=mpi_master())
+
         nocc = molecule.number_of_alpha_electrons()
         nvir = mo.shape[1] - nocc
 
+        eocc = ea[:nocc]
+        evir = ea[nocc:]
+        e_ov = -eocc.reshape(-1, 1) + evir
+
+        epsilon = {
+            'o': eocc,
+            'v': evir,
+            'ov': e_ov,
+        }
+
         if self.rank == mpi_master():
+            self.print_header()
+            self.ostream.print_info(
+                'Number of occupied orbitals: {:d}'.format(nocc))
+            self.ostream.print_info(
+                'Number of virtual orbitals: {:d}'.format(nvir))
+            self.ostream.print_blank()
+
             fa = scf_tensors['F'][0]
             fmo = np.matmul(mo.T, np.matmul(fa, mo))
             fab = fmo[nocc:, nocc:]
             fij = fmo[:nocc, :nocc]
+        else:
+            fab = None
+            fij = None
+
+        auxiliary_matrices = {
+            'fab': fab,
+            'fij': fij,
+        }
 
         # set start time
 
         start_time = tm.time()
 
-        # set up trial excitation vectors on master node
+        # set up trial excitation vectors
 
-        diag_mat, trial_vecs = self.gen_trial_vectors(mol_orbs, molecule)
+        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
 
-        if self.rank == mpi_master():
-            trial_mat = trial_vecs[0].zvector_to_numpy()
-            for vec in trial_vecs[1:]:
-                trial_mat = np.hstack((trial_mat, vec.zvector_to_numpy()))
-        else:
-            trial_mat = None
-        trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
+        exci_list = [(evir[a] - eocc[nocc - 1 - i], nocc - 1 - i, a)
+                     for i in range(min(self.nstates, nocc))
+                     for a in range(min(self.nstates, nvir))]
+
+        exci_list = sorted(exci_list)[:self.nstates]
+
+        trial_mat = np.zeros((nocc * nvir, len(exci_list)))
+        for ind, (delta_e, i, a) in enumerate(exci_list):
+            trial_ov = trial_mat[:, ind].reshape(nocc, nvir)
+            trial_ov[i, a] = 1.0
 
         # block Davidson algorithm setup
 
@@ -153,60 +185,22 @@ class AdcOneDriver:
 
         # MO integrals
 
-        # <aj||ib> = <aj|ib> - <aj|bi>
-        #          = <ij|ab> - <ib|ja>
-        #             OO VV     OV OV
-
-        moints_drv = MOIntegralsDriver(self.comm, self.ostream)
-        grps = [p for p in range(self.nodes)]
-
-        # <OO|VV>
-        oovv = moints_drv.compute(molecule, basis, mol_orbs, 'OOVV', grps)
-
-        # <OV|OV>
-        ovov = moints_drv.compute(molecule, basis, mol_orbs, 'OVOV', grps)
-
-        if self.rank == mpi_master():
-            self.print_header()
+        if mo_indices is None or mo_integrals is None:
+            moints_drv = MOIntegralsDriver(self.comm, self.ostream)
+            moints_drv.update_settings({
+                'qq_type': self.qq_type,
+                'eri_thresh': self.eri_thresh
+            })
+            mo_indices, mo_integrals = moints_drv.compute(
+                molecule, basis, scf_tensors, ['oo'])
 
         # start iterations
 
         for iteration in range(self.max_iter):
 
-            sigma_mat = np.zeros(trial_mat.shape)
-
-            for vecind in range(trial_mat.shape[1]):
-                cjb = trial_mat[:nocc * nvir, vecind].reshape(nocc, nvir)
-
-                # 0th order contribution
-
-                if self.rank == mpi_master():
-                    mat = np.matmul(cjb, fab.T) - np.matmul(fij, cjb)
-                else:
-                    mat = np.zeros((nocc, nvir))
-
-                # 1st order contribution
-
-                if not self.triplet:
-                    # 'ijab,jb->ia'
-                    for pair in oovv.get_gen_pairs():
-                        i = pair.first()
-                        j = pair.second()
-                        ab = oovv.to_numpy(pair)
-                        mat[i, :] += (2.0 * np.matmul(ab, cjb.T))[:, j]
-
-                # 'ibja,jb->ia'
-                for pair in ovov.get_gen_pairs():
-                    i = pair.first()
-                    j = pair.second()
-                    ba = ovov.to_numpy(pair)
-                    mat[i, :] -= (np.matmul(ba.T, cjb.T))[:, j]
-
-                sigma_mat[:, vecind] = mat.reshape(nocc * nvir)[:]
-
-            sigma_mat = self.comm.reduce(sigma_mat,
-                                         op=MPI.SUM,
-                                         root=mpi_master())
+            sigma_mat = self.compute_sigma(trial_mat, epsilon,
+                                           auxiliary_matrices, mo_indices,
+                                           mo_integrals)
 
             if self.rank == mpi_master():
                 self.solver.add_iteration_data(sigma_mat, trial_mat, iteration)
@@ -229,10 +223,53 @@ class AdcOneDriver:
 
         if self.rank == mpi_master():
             reigs, rnorms = self.solver.get_eigenvalues()
+            rvecs = self.solver.ritz_vectors.copy()
             self.print_convergence(start_time, reigs)
-            return reigs
+            return {
+                'eigenvalues': reigs,
+                'eigenvectors': rvecs,
+            }
         else:
-            return None
+            return {}
+
+    def compute_sigma(self, trial_mat, epsilon, auxiliary_matrices, mo_indices,
+                      mo_integrals):
+
+        eocc = epsilon['o']
+        evir = epsilon['v']
+
+        nocc = eocc.shape[0]
+        nvir = evir.shape[0]
+
+        fab = auxiliary_matrices['fab']
+        fij = auxiliary_matrices['fij']
+
+        sigma_mat = np.zeros(trial_mat.shape)
+
+        for vecind in range(trial_mat.shape[1]):
+            rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+
+            sigma = np.zeros(rjb.shape)
+
+            # 0th-order contribution
+
+            if self.rank == mpi_master():
+                sigma += np.matmul(rjb, fab.T) - np.matmul(fij, rjb)
+
+            # 1st-order contribution
+
+            for ind, (i, j) in enumerate(mo_indices['oo']):
+                # [ 2 (ia|jb) - (ij|ab) ] R_jb
+                vv_1 = mo_integrals['chem_ovov_K'][ind]
+                vv_2 = mo_integrals['chem_oovv_J'][ind]
+                ab = 2.0 * vv_1 - vv_2
+                sigma[i, :] += np.dot(ab, rjb[j, :])
+
+            sigma_mat[:, vecind] = sigma.reshape(nocc * nvir)[:]
+
+        sigma_mat = self.comm.reduce(sigma_mat, op=MPI.SUM, root=mpi_master())
+
+        return sigma_mat
 
     def print_header(self):
         """Prints ADC(1) driver setup header to output stream"""
@@ -261,38 +298,6 @@ class AdcOneDriver:
         self.ostream.print_blank()
 
         self.ostream.flush()
-
-    def gen_trial_vectors(self, mol_orbs, molecule):
-        """
-        Generates set of trial vectors.
-
-        :param mol_orbs:
-            The molecular orbitals.
-        :param molecule:
-            The molecule.
-        :return:
-            The set of trial vectors.
-        """
-
-        if self.rank == mpi_master():
-
-            nocc = molecule.number_of_alpha_electrons()
-            norb = mol_orbs.number_mos()
-
-            zvec = ExcitationVector(szblock.aa, 0, nocc, nocc, norb, True)
-            exci_list = zvec.small_energy_identifiers(mol_orbs, self.nstates)
-
-            diag_mat = zvec.diagonal_to_numpy(mol_orbs)
-
-            trial_vecs = []
-            for exci_ind in exci_list:
-                trial_vecs.append(
-                    ExcitationVector(szblock.aa, 0, nocc, nocc, norb, True))
-                trial_vecs[-1].set_zcoefficient(1.0, exci_ind)
-
-            return diag_mat, trial_vecs
-
-        return None, []
 
     def check_convergence(self, iteration):
         """
@@ -334,7 +339,7 @@ class AdcOneDriver:
         # excited states information
 
         reigs, rnorms = self.solver.get_eigenvalues()
-        for i in range(reigs.shape[0]):
+        for i in range(reigs[:self.nstates].shape[0]):
             exec_str = "State {:2d}: {:5.8f} ".format(i + 1, reigs[i])
             exec_str += "au Residual Norm: {:3.8f}".format(rnorms[i])
             self.ostream.print_header(exec_str.ljust(84))
@@ -367,7 +372,7 @@ class AdcOneDriver:
             valstr = "ADC(1) excited states"
             self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_header(('-' * len(valstr)).ljust(92))
-            for s, e in enumerate(reigs):
+            for s, e in enumerate(reigs[:self.nstates]):
                 valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
