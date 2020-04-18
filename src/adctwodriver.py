@@ -53,7 +53,6 @@ class AdcTwoDriver:
         self.conv_thresh = 1.0e-4
         self.max_iter = 50
         self.cur_iter = 0
-        self.solver = None
         self.is_converged = None
 
         # mpi information
@@ -188,17 +187,13 @@ class AdcTwoDriver:
         diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
 
         if self.rank == mpi_master():
-            trial_mat = adc_one_results['eigenvectors'].copy()
-            reigs = adc_one_results['eigenvalues'].copy()
+            initial_trials = adc_one_results['eigenvectors'].copy()
+            initial_reigs = adc_one_results['eigenvalues'].copy()
         else:
-            trial_mat = None
-            reigs = None
-        trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
-        reigs = self.comm.bcast(reigs, root=mpi_master())
-
-        # block Davidson algorithm setup
-
-        self.solver = BlockDavidsonSolver()
+            initial_trials = None
+            initial_reigs = None
+        initial_trials = self.comm.bcast(initial_trials, root=mpi_master())
+        initial_reigs = self.comm.bcast(initial_reigs, root=mpi_master())
 
         # start ADC(2)
 
@@ -210,75 +205,106 @@ class AdcTwoDriver:
                 'Number of virtual orbitals: {:d}'.format(nvir))
             self.ostream.print_blank()
 
-        for iteration in range(self.max_iter):
+        root_converged = [False] * self.nstates
+        converged_eigs = [None] * self.nstates
+        s_components_2 = [None] * self.nstates
 
-            iter_start_time = tm.time()
+        for root in range(self.nstates):
 
-            sigma_mat = self.compute_sigma(trial_mat, reigs, epsilon,
-                                           auxiliary_matrices, mo_indices,
-                                           mo_integrals)
+            trial_mat = initial_trials.copy()
+            omega = initial_reigs[root]
 
-            if self.rank == mpi_master():
-                self.solver.add_iteration_data(sigma_mat, trial_mat, iteration)
-                self.solver.compute(diag_mat)
-                ritz_vecs = self.solver.ritz_vectors.copy()
-                reigs, rnorms = self.solver.get_eigenvalues()
-            else:
-                ritz_vecs = None
-                reigs = None
-            ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
-            reigs = self.comm.bcast(reigs, root=mpi_master())
+            solver = BlockDavidsonSolver()
 
-            sigma_vecs_from_ritz = self.compute_sigma(ritz_vecs, reigs, epsilon,
-                                                      auxiliary_matrices,
-                                                      mo_indices, mo_integrals)
+            self.ostream.print_header(
+                '*** Starting iterations for solving root {}'.format(
+                    root + 1).ljust(92))
+            self.ostream.print_blank()
 
-            d_sigma_vecs_from_ritz = self.compute_d_sigma(
-                ritz_vecs, reigs, epsilon, mo_indices, mo_integrals)
+            for iteration in range(self.max_iter):
 
-            # compute discrepancy in eigenvalues
-            if self.rank == mpi_master():
-                s_comp_square = 1.0 / (1.0 + np.array([
-                    np.dot(ritz_vecs[:, i], d_sigma_vecs_from_ritz[:, i])
-                    for i in range(ritz_vecs.shape[1])
-                ]))
-                eigs_from_ritz = np.array([
-                    np.dot(ritz_vecs[:, i], sigma_vecs_from_ritz[:, i])
-                    for i in range(ritz_vecs.shape[1])
-                ])
-                delta_eigs = np.abs(reigs - eigs_from_ritz)
-            else:
-                delta_eigs = None
+                omega_eigs = np.full(trial_mat.shape[1], omega)
 
-            # update the trial-sigma pairs in the solver and get new trial_mat
-            # and eigenvalues for the next round
-            if self.rank == mpi_master():
-                self.solver.neigenpairs = ritz_vecs.shape[1]
-                self.solver.trial_matrices = ritz_vecs.copy()
-                self.solver.sigma_matrices = sigma_vecs_from_ritz.copy()
-                trial_mat = self.solver.compute(diag_mat)
-                reigs, rnorms = self.solver.get_eigenvalues()
-            else:
-                trial_mat = None
-                reigs, rnorms = None, None
-            trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
-            reigs = self.comm.bcast(reigs, root=mpi_master())
+                sigma_mat = self.compute_sigma(trial_mat, omega_eigs, epsilon,
+                                               auxiliary_matrices, mo_indices,
+                                               mo_integrals)
 
-            # print iteration
-            if self.rank == mpi_master():
-                self.print_iter_data(iteration, iter_start_time)
+                if self.rank == mpi_master():
+                    solver.add_iteration_data(sigma_mat, trial_mat, iteration)
+                    trial_mat = solver.compute(diag_mat)
+                    ritz_vecs = solver.ritz_vectors.copy()
+                else:
+                    trial_mat = None
+                    ritz_vecs = None
+                trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
+                ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
 
-            # check convergence
-            self.check_convergence(iteration, rnorms, delta_eigs)
-            if self.is_converged:
-                break
+                omega_eigs = np.full(ritz_vecs.shape[1], omega)
+
+                sigma_vecs_from_ritz = self.compute_sigma(
+                    ritz_vecs, omega_eigs, epsilon, auxiliary_matrices,
+                    mo_indices, mo_integrals)
+
+                d_sigma_vecs_from_ritz = self.compute_d_sigma(
+                    ritz_vecs, omega_eigs, epsilon, mo_indices, mo_integrals)
+
+                if self.rank == mpi_master():
+                    tvec = ritz_vecs[:, root]
+                    svec = sigma_vecs_from_ritz[:, root]
+                    dsvec = d_sigma_vecs_from_ritz[:, root]
+                    s_comp_square = 1.0 / (1.0 + np.dot(tvec, dsvec))
+                    eig_from_ritz = np.dot(tvec, svec)
+                    residual_norm = np.linalg.norm(svec - omega * tvec)
+                    eig_incr = (eig_from_ritz - omega) * s_comp_square
+                else:
+                    s_comp_square = None
+                    residual_norm = None
+                    eig_incr = None
+                eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
+                residual_norm = self.comm.bcast(residual_norm,
+                                                root=mpi_master())
+
+                self.print_iter_data(iteration, omega, eig_incr, residual_norm)
+
+                if (abs(eig_incr) < self.conv_thresh**2 and
+                        residual_norm < self.conv_thresh):
+                    root_converged[root] = True
+                    converged_eigs[root] = omega
+                    s_components_2[root] = s_comp_square
+                    self.ostream.print_blank()
+                    self.ostream.print_header(
+                        '    Root {} is converged: {:.8f} au'.format(
+                            root + 1, omega).ljust(92))
+                    self.ostream.print_blank()
+                    self.ostream.flush()
+                    break
+                else:
+                    omega += eig_incr
+                    if self.rank == mpi_master():
+                        if solver.trial_matrices.shape[1] > self.nstates:
+                            solver.trial_matrices = ritz_vecs.copy()
+                            solver.sigma_matrices = sigma_vecs_from_ritz.copy()
+
+            if not root_converged[root]:
+                self.ostream.print_blank()
+                self.ostream.print_header(
+                    '    Root {} is NOT converged.'.format(root + 1).ljust(92))
+                self.ostream.print_blank()
+                self.ostream.flush()
+
+        # check convergence
+        self.is_converged = True
+        for root in range(self.nstates):
+            if not root_converged[root]:
+                self.is_converged = False
 
         # print converged excited states
-
         if self.rank == mpi_master():
-            reigs, rnorms = self.solver.get_eigenvalues()
-            self.print_convergence(start_time, reigs, s_comp_square)
-            return {'eigenvalues': reigs}
+            self.print_convergence(start_time, converged_eigs, s_components_2)
+            return {
+                'eigenvalues': np.array(converged_eigs),
+                's_components_2': np.array(s_components_2),
+            }
         else:
             return {}
 
@@ -677,93 +703,45 @@ class AdcTwoDriver:
 
         self.ostream.flush()
 
-    def check_convergence(self, iteration, rnorms, delta_eigs):
-        """
-        Checks convergence of excitation energies and set convergence flag.
-
-        :param iteration:
-            The current excited states solver iteration.
-        """
-
-        self.cur_iter = iteration
-
-        if self.rank == mpi_master():
-            max_norm = np.max(rnorms[:self.nstates])
-            max_ediff = np.max(delta_eigs[:self.nstates])
-            self.is_converged = (max_norm < self.conv_thresh and
-                                 max_ediff < max(1.0e-12, self.conv_thresh**2))
-        else:
-            self.is_converged = False
-
-        self.is_converged = self.comm.bcast(self.is_converged,
-                                            root=mpi_master())
-
-    def print_iter_data(self, iteration, iter_start_time):
+    def print_iter_data(self, iteration, omega, eig_incr, rnorm):
         """Prints excited states solver iteration data to output stream.
 
         :param iteration:
             The current excited states solver iteration.
-        :param iter_start_time:
-            The starting time of the iteration.
         """
 
-        # iteration header
-
-        exec_str = " *** Iteration: " + (str(iteration + 1)).rjust(3)
-        exec_str += " * Reduced Space: "
-        exec_str += (str(self.solver.reduced_space_size())).rjust(4)
-        rmax, rmin = self.solver.max_min_residual_norms()
-        exec_str += " * Residues (Max,Min): {:.2e} and {:.2e}".format(
-            rmax, rmin)
-        self.ostream.print_header(exec_str)
-        self.ostream.print_blank()
-
-        # excited states information
-
-        reigs, rnorms = self.solver.get_eigenvalues()
-        for i in range(reigs[:self.nstates].shape[0]):
-            exec_str = "State {:2d}: {:5.8f} ".format(i + 1, reigs[i])
-            exec_str += "au Residual Norm: {:3.8f}".format(rnorms[i])
-            self.ostream.print_header(exec_str.ljust(84))
-        self.ostream.print_blank()
-
-        # timing
-
-        self.ostream.print_info(
-            'Time spent in this iteration: {:.2f} sec.'.format(tm.time() -
-                                                               iter_start_time))
-        self.ostream.print_blank()
+        exec_str = '    Iteration: {:d}'.format(iteration + 1)
+        exec_str += ' * Eigenvalue: {:.8f}'.format(omega)
+        exec_str += ' * Residual Norm: {:.2e}'.format(rnorm)
+        self.ostream.print_header(exec_str.ljust(92))
         self.ostream.flush()
 
-    def print_convergence(self, start_time, reigs, s_comp_square):
+    def print_convergence(self, start_time, converged_eigs, s_components_2):
         """
         Prints convergence and excited state information.
 
         :param start_time:
             The start time of calculation.
-        :param reigs:
-            The excitaion energies.
         """
 
-        valstr = "*** {:d} excited states ".format(self.nstates)
+        valstr = '*** {:d} excited states '.format(self.nstates)
         if self.is_converged:
-            valstr += "converged"
+            valstr += 'converged.'
         else:
-            valstr += "not converged"
-        valstr += " in {:d} iterations. ".format(self.cur_iter + 1)
-        valstr += "Time: {:.2f}".format(tm.time() - start_time) + " sec."
+            valstr += 'NOT converged.'
+        valstr += ' Time: {:.2f}'.format(tm.time() - start_time) + ' sec.'
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
         self.ostream.print_blank()
         if self.is_converged:
-            valstr = "ADC(2) excited states"
+            valstr = 'ADC(2) excited states'
             self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_header(('-' * len(valstr)).ljust(92))
-            for s, e in enumerate(reigs[:self.nstates]):
+            for s, e in enumerate(converged_eigs):
                 valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
-                valstr += '    |v1|^2={:.4f}'.format(s_comp_square[s])
+                valstr += '    |v1|^2={:.4f}'.format(s_components_2[s])
                 self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_blank()
             self.ostream.print_blank()

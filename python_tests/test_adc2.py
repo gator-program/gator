@@ -22,6 +22,7 @@ class TestADC2(unittest.TestCase):
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
 
         ref_exc_ene = [float(line.split()[1]) for line in data_lines]
+        ref_s_comp2 = [float(line.split()[2]) for line in data_lines]
 
         adc_drv = AdcTwoDriver(task.mpi_comm, task.ostream)
         adc_drv.update_settings({'nstates': len(ref_exc_ene)})
@@ -30,7 +31,9 @@ class TestADC2(unittest.TestCase):
 
         if task.mpi_rank == mpi_master():
             exc_ene = adc_results['eigenvalues']
+            s_comp2 = adc_results['s_components_2']
             self.assertTrue(np.max(np.abs(exc_ene - ref_exc_ene)) < 1.0e-6)
+            self.assertTrue(np.max(np.abs(s_comp2 - ref_s_comp2)) < 1.0e-4)
 
     def test_adc2_sto3g(self):
 
@@ -39,10 +42,11 @@ class TestADC2(unittest.TestCase):
             inpfile = os.path.join('python_tests', inpfile)
 
         raw_data = """
-            0     0.4705131
-            1     0.5725549
-            2     0.5936734
-            3     0.7129688
+            0     0.4705131     0.985
+            1     0.5725549    0.9896
+            2     0.5936734    0.9837
+            3     0.7129688    0.9872
+            4     0.8396973    0.9913
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
@@ -55,10 +59,11 @@ class TestADC2(unittest.TestCase):
             inpfile = os.path.join('python_tests', inpfile)
 
         raw_data = """
-            0      0.299412
-            1     0.3767263
-            2     0.3839022
-            3     0.4627939
+            0      0.299412    0.9523
+            1     0.3767263    0.9555
+            2     0.3839021    0.9515
+            3     0.4627936    0.9556
+            4     0.5586361    0.9644
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
