@@ -32,6 +32,9 @@ def main():
     if task_type in ['scf', 'mp2', 'adc', 'adc1', 'adc2', 'adc2_rsp']:
         scf_drv = ScfRestrictedDriver(comm, ostream)
         if 'scf' in input_dict:
+            if ('conv_thresh' not in input_dict['scf'] and
+                    task_type in ['adc2', 'adc2_rsp']):
+                input_dict['scf']['conv_thresh'] = '1.0e-8'
             scf_drv.update_settings(input_dict['scf'])
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
         if not scf_drv.is_converged:
