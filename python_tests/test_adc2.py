@@ -15,6 +15,7 @@ class TestADC2(unittest.TestCase):
 
         task = GatorTask(inpfile, None, MPI.COMM_WORLD)
         task.input_dict['scf']['checkpoint_file'] = None
+        task.input_dict['scf']['conv_thresh'] = '1.0e-8'
 
         scf_drv = ScfRestrictedDriver(task.mpi_comm, task.ostream)
         scf_drv.update_settings(task.input_dict['scf'],
@@ -32,7 +33,7 @@ class TestADC2(unittest.TestCase):
         if task.mpi_rank == mpi_master():
             exc_ene = adc_results['eigenvalues']
             s_comp2 = adc_results['s_components_2']
-            self.assertTrue(np.max(np.abs(exc_ene - ref_exc_ene)) < 1.0e-6)
+            self.assertTrue(np.max(np.abs(exc_ene - ref_exc_ene)) < 1.0e-7)
             self.assertTrue(np.max(np.abs(s_comp2 - ref_s_comp2)) < 1.0e-4)
 
     def test_adc2_sto3g(self):
@@ -64,6 +65,23 @@ class TestADC2(unittest.TestCase):
             2     0.3839021    0.9515
             3     0.4627936    0.9556
             4     0.5586361    0.9644
+        """
+        data_lines = raw_data.split(os.linesep)[1:-1]
+
+        self.run_adc2(inpfile, data_lines)
+
+    def test_adc2_augccpvdz(self):
+
+        inpfile = os.path.join('inputs', 'water-augccpvdz.inp')
+        if not os.path.isfile(inpfile):
+            inpfile = os.path.join('python_tests', inpfile)
+
+        raw_data = """
+            0       0.25812    0.9298
+            1     0.3171875     0.925
+            2     0.3368847      0.93
+            3     0.3901644    0.9323
+            4     0.3948281    0.9258
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
