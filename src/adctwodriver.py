@@ -238,7 +238,7 @@ class AdcTwoDriver:
                 ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
 
                 sigma_vecs_from_ritz = self.compute_sigma(
-                    ritz_vecs, np.full(ritz_vecs.shape[1], omega), epsilon,
+                    ritz_vecs[:, root:root + 1], np.array([omega]), epsilon,
                     auxiliary_matrices, mo_indices, mo_integrals)
 
                 d_sigma_vecs_from_ritz = self.compute_d_sigma(
@@ -247,7 +247,7 @@ class AdcTwoDriver:
 
                 if self.rank == mpi_master():
                     tvec = ritz_vecs[:, root]
-                    svec = sigma_vecs_from_ritz[:, root]
+                    svec = sigma_vecs_from_ritz[:, 0]
                     dsvec = d_sigma_vecs_from_ritz[:, 0]
                     residual_norm = np.linalg.norm(svec - omega * tvec)
                     eig_from_ritz = np.dot(tvec, svec)
@@ -281,12 +281,22 @@ class AdcTwoDriver:
                 eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
                 omega += eig_incr
 
+                collapse_subspace = False
                 if self.rank == mpi_master():
                     if abs(eig_diff) > self.conv_thresh:
                         max_subspace = self.nstates
                     else:
-                        max_subspace = self.nstates * 2
-                    if solver.trial_matrices.shape[1] > max_subspace:
+                        max_subspace = self.nstates * 10
+                    if solver.reduced_space_size() > max_subspace:
+                        collapse_subspace = True
+                collapse_subspace = self.comm.bcast(collapse_subspace,
+                                                    root=mpi_master())
+
+                if collapse_subspace:
+                    sigma_vecs_from_ritz = self.compute_sigma(
+                        ritz_vecs, np.full(ritz_vecs.shape[1], omega), epsilon,
+                        auxiliary_matrices, mo_indices, mo_integrals)
+                    if self.rank == mpi_master():
                         solver.trial_matrices = ritz_vecs.copy()
                         solver.sigma_matrices = sigma_vecs_from_ritz.copy()
 
