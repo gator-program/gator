@@ -223,11 +223,9 @@ class AdcTwoDriver:
 
             for iteration in range(self.max_iter):
 
-                omega_eigs = np.full(trial_mat.shape[1], omega)
-
-                sigma_mat = self.compute_sigma(trial_mat, omega_eigs, epsilon,
-                                               auxiliary_matrices, mo_indices,
-                                               mo_integrals)
+                sigma_mat = self.compute_sigma(
+                    trial_mat, np.full(trial_mat.shape[1], omega), epsilon,
+                    auxiliary_matrices, mo_indices, mo_integrals)
 
                 if self.rank == mpi_master():
                     solver.add_iteration_data(sigma_mat, trial_mat, iteration)
@@ -239,51 +237,58 @@ class AdcTwoDriver:
                 trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
                 ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
 
-                omega_eigs = np.full(ritz_vecs.shape[1], omega)
-
                 sigma_vecs_from_ritz = self.compute_sigma(
-                    ritz_vecs, omega_eigs, epsilon, auxiliary_matrices,
-                    mo_indices, mo_integrals)
+                    ritz_vecs, np.full(ritz_vecs.shape[1], omega), epsilon,
+                    auxiliary_matrices, mo_indices, mo_integrals)
 
                 d_sigma_vecs_from_ritz = self.compute_d_sigma(
-                    ritz_vecs, omega_eigs, epsilon, mo_indices, mo_integrals)
+                    ritz_vecs[:, root:root + 1], np.array([omega]), epsilon,
+                    mo_indices, mo_integrals)
 
                 if self.rank == mpi_master():
                     tvec = ritz_vecs[:, root]
                     svec = sigma_vecs_from_ritz[:, root]
-                    dsvec = d_sigma_vecs_from_ritz[:, root]
-                    s_comp_square = 1.0 / (1.0 + np.dot(tvec, dsvec))
-                    eig_from_ritz = np.dot(tvec, svec)
+                    dsvec = d_sigma_vecs_from_ritz[:, 0]
                     residual_norm = np.linalg.norm(svec - omega * tvec)
-                    eig_incr = (eig_from_ritz - omega) * s_comp_square
+                    eig_from_ritz = np.dot(tvec, svec)
+                    s_comp_square = 1.0 / (1.0 + np.dot(tvec, dsvec))
+                    eig_diff = eig_from_ritz - omega
+                    eig_incr = eig_diff * s_comp_square
                 else:
-                    s_comp_square = None
-                    residual_norm = None
                     eig_incr = None
-                eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
-                residual_norm = self.comm.bcast(residual_norm,
-                                                root=mpi_master())
 
-                self.print_iter_data(iteration, omega, eig_incr, residual_norm)
+                if self.rank == mpi_master():
+                    self.print_iter_data(iteration, omega, eig_incr,
+                                         residual_norm)
+                    if (abs(eig_diff) < self.conv_thresh**2 and
+                            residual_norm < self.conv_thresh):
+                        root_converged[root] = True
+                        converged_eigs[root] = omega
+                        s_components_2[root] = s_comp_square
+                        self.ostream.print_blank()
+                        self.ostream.print_header(
+                            '    Root {} is converged: {:.8f} au'.format(
+                                root + 1, omega).ljust(92))
+                        self.ostream.print_blank()
+                        self.ostream.flush()
 
-                if (abs(eig_incr) < self.conv_thresh**2 and
-                        residual_norm < self.conv_thresh):
-                    root_converged[root] = True
-                    converged_eigs[root] = omega
-                    s_components_2[root] = s_comp_square
-                    self.ostream.print_blank()
-                    self.ostream.print_header(
-                        '    Root {} is converged: {:.8f} au'.format(
-                            root + 1, omega).ljust(92))
-                    self.ostream.print_blank()
-                    self.ostream.flush()
+                root_converged[root] = self.comm.bcast(root_converged[root],
+                                                       root=mpi_master())
+
+                if root_converged[root]:
                     break
-                else:
-                    omega += eig_incr
-                    if self.rank == mpi_master():
-                        if solver.trial_matrices.shape[1] > self.nstates:
-                            solver.trial_matrices = ritz_vecs.copy()
-                            solver.sigma_matrices = sigma_vecs_from_ritz.copy()
+
+                eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
+                omega += eig_incr
+
+                if self.rank == mpi_master():
+                    if abs(eig_diff) > self.conv_thresh:
+                        max_subspace = self.nstates
+                    else:
+                        max_subspace = self.nstates * 2
+                    if solver.trial_matrices.shape[1] > max_subspace:
+                        solver.trial_matrices = ritz_vecs.copy()
+                        solver.sigma_matrices = sigma_vecs_from_ritz.copy()
 
             if not root_converged[root]:
                 self.ostream.print_blank()
