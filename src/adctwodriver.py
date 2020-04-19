@@ -225,11 +225,11 @@ class AdcTwoDriver:
         trial_mat = initial_trials.copy()
         omega = initial_reigs[cur_root]
 
+        sigma_build_timing = []
+
         while cur_root < self.nstates:
 
-            iter_start_time = tm.time()
-            t0 = iter_start_time
-            iter_timing = []
+            t0 = tm.time()
 
             # compute sigma vectors from trial vectors
             n_trials = trial_mat.shape[1]
@@ -238,10 +238,8 @@ class AdcTwoDriver:
                                            auxiliary_matrices, mo_indices,
                                            mo_integrals)
 
-            if n_trials > 0:
-                iter_timing.append(
-                    ('computing {:d} sigma vectors'.format(n_trials),
-                     tm.time() - t0))
+            sigma_build_timing.append(
+                ('sigma', trial_mat.shape[1], tm.time() - t0))
 
             # add sigma-trial pairs to solver and get ritz vectors
             if self.rank == mpi_master():
@@ -261,14 +259,14 @@ class AdcTwoDriver:
                 ritz_vecs[:, cur_root:cur_root + 1], np.array([omega]), epsilon,
                 auxiliary_matrices, mo_indices, mo_integrals)
 
-            iter_timing.append(('computing 1 sigma vector', tm.time() - t0))
+            sigma_build_timing.append(('sigma', 1, tm.time() - t0))
             t0 = tm.time()
 
             d_sigma_vecs_from_ritz = self.compute_d_sigma(
                 ritz_vecs[:, cur_root:cur_root + 1], np.array([omega]), epsilon,
                 mo_indices, mo_integrals)
 
-            iter_timing.append(('computing 1 d_sigma vector', tm.time() - t0))
+            sigma_build_timing.append(('d_sigma', 1, tm.time() - t0))
 
             # compute residual norm and eigenvalue increment for current root
             if self.rank == mpi_master():
@@ -332,11 +330,15 @@ class AdcTwoDriver:
                 self.ostream.print_info(
                     'Collapsing subspace...'.format(cur_root + 1))
                 self.ostream.print_blank()
+
                 t0 = tm.time()
 
                 sigma_vecs_from_ritz = self.compute_sigma(
                     ritz_vecs, np.full(ritz_vecs.shape[1], omega), epsilon,
                     auxiliary_matrices, mo_indices, mo_integrals)
+
+                sigma_build_timing.append(
+                    ('sigma', ritz_vecs.shape[1], tm.time() - t0))
 
                 if self.rank == mpi_master():
                     solver.trial_matrices = ritz_vecs.copy()
@@ -346,9 +348,6 @@ class AdcTwoDriver:
                     trial_mat = None
                 trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
 
-                iter_timing.append(('collapsing subspace ({:d} vecs)'.format(
-                    ritz_vecs.shape[1]), tm.time() - t0))
-
         # check total convergence
         self.is_converged = True
         for root in range(self.nstates):
@@ -357,6 +356,7 @@ class AdcTwoDriver:
 
         # print converged excited states
         if self.rank == mpi_master():
+            self.print_sigma_timing(sigma_build_timing)
             self.print_convergence(start_time, converged_eigs, s_components_2,
                                    cur_iter)
             if self.is_converged:
@@ -788,6 +788,33 @@ class AdcTwoDriver:
 
         self.ostream.print_blank()
         self.ostream.flush()
+
+    def print_sigma_timing(self, sigma_build_timing):
+
+        n_sigma, n_dsigma = 0, 0
+        t_sigma, t_dsigma = 0.0, 0.0
+
+        for label, n, t in sigma_build_timing:
+            if label == 'sigma':
+                n_sigma += n
+                t_sigma += t
+            elif label == 'd_sigma':
+                n_dsigma += n
+                t_dsigma += t
+
+        valstr = 'Total number of sigma builds: {:d}'.format(n_sigma)
+        self.ostream.print_info(valstr.ljust(92))
+        valstr = 'Average time per sigma build: {:.2f} sec'.format(t_sigma /
+                                                                   n_sigma)
+        self.ostream.print_info(valstr.ljust(92))
+        self.ostream.print_blank()
+
+        valstr = 'Total number of d_sigma builds: {:d}'.format(n_dsigma)
+        self.ostream.print_info(valstr.ljust(92))
+        valstr = 'Average time per d_sigma build: {:.2f} sec'.format(t_dsigma /
+                                                                     n_dsigma)
+        self.ostream.print_info(valstr.ljust(92))
+        self.ostream.print_blank()
 
     def print_convergence(self, start_time, converged_eigs, s_components_2,
                           cur_iter):
