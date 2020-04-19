@@ -7,6 +7,7 @@ from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
 from veloxchem import get_qq_type
 
+from .gatortask import OutputStream
 from .mointsdriver import MOIntegralsDriver
 
 
@@ -35,7 +36,7 @@ class AdcOneDriver:
         - nodes: The number of MPI processes.
     """
 
-    def __init__(self, comm, ostream):
+    def __init__(self, comm, ostream=OutputStream()):
         """
         Initializes ADC(1) computation driver.
         """

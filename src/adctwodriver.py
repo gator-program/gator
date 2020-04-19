@@ -113,19 +113,27 @@ class AdcTwoDriver:
 
         start_time = tm.time()
 
-        # orbitals and orbital energies
+        # prepare MO integrals
+
+        moints_drv = MOIntegralsDriver(self.comm, self.ostream)
+        moints_drv.update_settings({
+            'qq_type': self.qq_type,
+            'eri_thresh': self.eri_thresh
+        })
+        mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
+                                                      scf_tensors)
+
+        # prepare orbital energies
 
         if self.rank == mpi_master():
             mo = scf_tensors['C']
             ea = scf_tensors['E']
         else:
-            mo = None
             ea = None
-        mo = self.comm.bcast(mo, root=mpi_master())
         ea = self.comm.bcast(ea, root=mpi_master())
 
         nocc = molecule.number_of_alpha_electrons()
-        nvir = mo.shape[1] - nocc
+        nvir = ea.shape[0] - nocc
 
         eocc = ea[:nocc]
         evir = ea[nocc:]
@@ -141,6 +149,8 @@ class AdcTwoDriver:
             'ov': e_ov,
         }
 
+        # prepare auxiliary matrices
+
         if self.rank == mpi_master():
             fa = scf_tensors['F'][0]
             fmo = np.matmul(mo.T, np.matmul(fa, mo))
@@ -149,18 +159,6 @@ class AdcTwoDriver:
         else:
             fab = None
             fij = None
-
-        # MO integrals
-
-        moints_drv = MOIntegralsDriver(self.comm, self.ostream)
-        moints_drv.update_settings({
-            'qq_type': self.qq_type,
-            'eri_thresh': self.eri_thresh
-        })
-        mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
-                                                      scf_tensors)
-
-        # precompute xA_ab and xB_ij matrices for 2nd-order contribution
 
         xA_ab, xB_ij = self.compute_xA_xB(epsilon, mo_indices, mo_integrals)
 
@@ -171,9 +169,21 @@ class AdcTwoDriver:
             'xB_ij': xB_ij,
         }
 
+        # print ADC(2) header
+
+        if self.rank == mpi_master():
+            self.print_header()
+            self.ostream.print_info(
+                'Number of occupied orbitals: {:d}'.format(nocc))
+            self.ostream.print_info(
+                'Number of virtual orbitals: {:d}'.format(nvir))
+            self.ostream.print_blank()
+
         # get initial guess from ADC(1)
 
-        adc_one_drv = AdcOneDriver(self.comm, self.ostream)
+        t0 = tm.time()
+
+        adc_one_drv = AdcOneDriver(self.comm)
         adc_one_drv.update_settings({
             'nstates': self.nstates,
             'eri_thresh': self.eri_thresh,
@@ -181,6 +191,12 @@ class AdcTwoDriver:
         })
         adc_one_results = adc_one_drv.compute(molecule, basis, scf_tensors,
                                               mo_indices, mo_integrals)
+
+        adc_one_str = 'Initial guess generated in {:.2f} sec.'.format(
+            tm.time() - t0)
+        self.ostream.print_info(adc_one_str)
+        self.ostream.print_blank()
+        self.ostream.flush()
 
         # set up trial excitation vectors
 
@@ -195,15 +211,7 @@ class AdcTwoDriver:
         initial_trials = self.comm.bcast(initial_trials, root=mpi_master())
         initial_reigs = self.comm.bcast(initial_reigs, root=mpi_master())
 
-        # start ADC(2)
-
-        if self.rank == mpi_master():
-            self.print_header()
-            self.ostream.print_info(
-                'Number of occupied orbitals: {:d}'.format(nocc))
-            self.ostream.print_info(
-                'Number of virtual orbitals: {:d}'.format(nvir))
-            self.ostream.print_blank()
+        # start ADC(2) iterations
 
         root_converged = [False] * self.nstates
         converged_eigs = [None] * self.nstates
@@ -223,15 +231,19 @@ class AdcTwoDriver:
             t0 = iter_start_time
             iter_timing = []
 
+            # compute sigma vectors from trial vectors
             n_trials = trial_mat.shape[1]
-            if n_trials > 0:
-                omega_vec = np.full(trial_mat.shape[1], omega)
-                sigma_mat = self.compute_sigma(trial_mat, omega_vec, epsilon,
-                                               auxiliary_matrices, mo_indices,
-                                               mo_integrals)
-            else:
-                sigma_mat = trial_mat.copy()
+            omega_vec = np.full(trial_mat.shape[1], omega)
+            sigma_mat = self.compute_sigma(trial_mat, omega_vec, epsilon,
+                                           auxiliary_matrices, mo_indices,
+                                           mo_integrals)
 
+            if n_trials > 0:
+                iter_timing.append(
+                    ('computing {:d} sigma vectors'.format(n_trials),
+                     tm.time() - t0))
+
+            # add sigma-trial pairs to solver and get ritz vectors
             if self.rank == mpi_master():
                 solver.add_iteration_data(sigma_mat, trial_mat, cur_iter)
                 trial_mat = solver.compute(diag_mat)
@@ -242,10 +254,7 @@ class AdcTwoDriver:
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
 
-            if n_trials > 0:
-                iter_timing.append(
-                    ('computing {:d} sigma vectors'.format(n_trials),
-                     tm.time() - t0))
+            # compute sigma and d_sigma vectors for current root
             t0 = tm.time()
 
             sigma_vecs_from_ritz = self.compute_sigma(
@@ -261,6 +270,7 @@ class AdcTwoDriver:
 
             iter_timing.append(('computing 1 d_sigma vector', tm.time() - t0))
 
+            # compute residual norm and eigenvalue increment for current root
             if self.rank == mpi_master():
                 tvec = ritz_vecs[:, cur_root]
                 svec = sigma_vecs_from_ritz[:, 0]
@@ -273,6 +283,7 @@ class AdcTwoDriver:
             else:
                 eig_incr = None
 
+            # check convergence
             if self.rank == mpi_master():
                 self.print_iteration(solver, cur_iter, cur_root, converged_eigs,
                                      omega, residual_norm)
@@ -300,9 +311,11 @@ class AdcTwoDriver:
             if cur_iter > self.max_iter:
                 break
 
+            # update eigenvalue
             eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
             omega += eig_incr
 
+            # collapse subspace if needed
             collapse_subspace = False
             if self.rank == mpi_master():
                 if abs(eig_diff) > self.conv_thresh:
@@ -336,7 +349,7 @@ class AdcTwoDriver:
                 iter_timing.append(('collapsing subspace ({:d} vecs)'.format(
                     ritz_vecs.shape[1]), tm.time() - t0))
 
-        # check convergence
+        # check total convergence
         self.is_converged = True
         for root in range(self.nstates):
             if not root_converged[root]:
@@ -346,10 +359,13 @@ class AdcTwoDriver:
         if self.rank == mpi_master():
             self.print_convergence(start_time, converged_eigs, s_components_2,
                                    cur_iter)
-            return {
-                'eigenvalues': np.array(converged_eigs),
-                's_components_2': np.array(s_components_2),
-            }
+            if self.is_converged:
+                return {
+                    'eigenvalues': np.array(converged_eigs),
+                    's_components_2': np.array(s_components_2),
+                }
+            else:
+                return {}
         else:
             return {}
 
