@@ -51,7 +51,7 @@ class AdcTwoDriver:
 
         # solver setup
         self.conv_thresh = 1.0e-4
-        self.max_iter = 50
+        self.max_iter = 150
         self.cur_iter = 0
         self.is_converged = None
 
@@ -306,7 +306,7 @@ class AdcTwoDriver:
                     omega = initial_reigs[cur_root]
                 continue
 
-            if cur_iter > self.max_iter:
+            if cur_iter >= self.max_iter:
                 break
 
             # update eigenvalue
@@ -828,9 +828,9 @@ class AdcTwoDriver:
         valstr = '*** {:d} excited states '.format(self.nstates)
         if self.is_converged:
             valstr += 'converged'
-            valstr += " in {:d} iterations. ".format(cur_iter)
         else:
-            valstr += 'NOT converged.'
+            valstr += 'NOT converged'
+        valstr += " in {:d} iterations. ".format(cur_iter)
         valstr += ' Time: {:.2f}'.format(tm.time() - start_time) + ' sec.'
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
