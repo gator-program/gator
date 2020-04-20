@@ -1,6 +1,7 @@
 from adcc import run_adc
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
+import time as tm
 
 
 class AdcDriver:
@@ -57,6 +58,7 @@ class AdcDriver:
         self.adc_core_orbitals = None
         self.adc_frozen_core = None
         self.adc_frozen_virtual = None
+        self.print_states = False
 
     def update_settings(self, adc_dict):
         """
@@ -111,6 +113,9 @@ class AdcDriver:
             else:
                 self.adc_frozen_virtual = orbs
 
+        if 'print_states' in adc_dict:
+            self.print_states = True
+
     def compute(self, task, scf_drv):
         """
         Performs ADC calculation.
@@ -121,6 +126,7 @@ class AdcDriver:
             The converged SCF driver.
         """
 
+        start_time = tm.time()
         scf_drv.task = task
 
         if self.rank == mpi_master():
@@ -139,11 +145,16 @@ class AdcDriver:
 
             self.print_excited_states(adc_drv)
 
+            if self.print_states:
+                self.print_detailed_states(adc_drv)
+
+            self.print_finish_header(adc_drv, start_time)
+
     def print_header(self):
         """
         Prints header for the ADC driver.
         """
-
+        #start_time = tm.time()
         self.ostream.print_blank()
         text = 'Algebraic Diagrammatic Construction (ADC)'
         self.ostream.print_header(text)
@@ -202,8 +213,73 @@ class AdcDriver:
 
         self.ostream.print_blank()
         self.ostream.flush()
+        #return start_time
+
+    def print_finish_header(self, adc_drv, start_time):
+        """
+        Prints finish header to output stream.
+
+        :param start_time:
+            The start time of the computation.
+        """
+        end_time = tm.time()
+
+        end = ' All went well!'
+        if hasattr(adc_drv, "converged"):
+            pass
+        else:
+            self.ostream.print_header('NOT CONVERGED')
+            end = ' Did NOT converge.'
+
+        self.ostream.print_header('=' * (58))
+        self.ostream.print_header('End of ADC calculation.' + end)
+        self.ostream.print_header('=' * (58))
+        self.ostream.print_blank()
+        self.ostream.flush()
+
+        self.ostream.print_separator()
+        exec_str = "Gator execution completed at "
+        exec_str += tm.asctime(tm.localtime(end_time)) + "."
+        self.ostream.print_title(exec_str)
+        self.ostream.print_separator()
+        exec_str = "Total execution time is "
+        exec_str += "{:.2f}".format(end_time - start_time) + " sec."
+        self.ostream.print_title(exec_str)
+        self.ostream.print_separator()
+        #exec_str = "ADC execution time is "
+        #sec_str += "{:.2f}".format(adc_drv.tim
+        self.ostream.flush()
 
     def print_excited_states(self, adc_drv):
+        """
+        Prints excited state information to output stream.
+
+        :param adc_drv:
+            The ADC driver.
+        """
+        self.ostream.print_blank()
+        text = 'ADC Summary of Results'
+        self.ostream.print_header(text)
+        self.ostream.print_header('-' * (len(text) + 2))
+        self.ostream.print_blank()
+        text = adc_drv.describe()
+        for line in text.splitlines():
+            self.ostream.print_header(line)
+
+        #text = "Index |     Excitation Energy, eV    |   Oscillator Strength  "
+        #self.ostream.print_header(text)
+#        for i in range(len(adc_drv.excitation_energies)):
+#            en = adc_drv.excitation_energies[i] * hartree_in_ev()
+#            osc = adc_drv.oscillator_strengths[i]
+#            exec_str = " " + (str(i + 1)).rjust(3) + 4 * " "
+#            exec_str += ("{:7.5f}".format(en)).center(27) + 3 * " "
+#            exec_str += ("{:5.5f}".format(osc)).center(17) + 3 * " "
+#            self.ostream.print_header(exec_str)
+#            self.ostream.flush()
+        self.ostream.print_blank()
+        self.ostream.print_blank()
+
+    def print_detailed_states(self, adc_drv):
         """
         Prints excited state information to output stream.
 
@@ -215,29 +291,10 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        text = "Index |     Excitation Energy, eV    |   Oscillator Strength  "
-        self.ostream.print_header(text)
+        text = adc_drv.describe_amplitudes()
+        for line in text.splitlines():
+            self.ostream.print_header(line)
 
-        end = ' All went well!'
-        if hasattr(adc_drv, "converged"):
-            self.ostream.print_header('-' * (len(text) + 2))
-        else:
-            self.ostream.print_header('NOT CONVERGED')
-            end = ' Did NOT converge.'
-            self.ostream.print_header('-' * (len(text) + 2))
+        self.ostream.print_blank()
+        self.ostream.print_blank()
 
-        for i in range(len(adc_drv.excitation_energies)):
-            en = adc_drv.excitation_energies[i] * hartree_in_ev()
-            osc = adc_drv.oscillator_strengths[i]
-            exec_str = " " + (str(i + 1)).rjust(3) + 4 * " "
-            exec_str += ("{:7.5f}".format(en)).center(27) + 3 * " "
-            exec_str += ("{:5.5f}".format(osc)).center(17) + 3 * " "
-            self.ostream.print_header(exec_str)
-            self.ostream.flush()
-        self.ostream.print_blank()
-        self.ostream.print_blank()
-        self.ostream.print_header('=' * (len(text) + 2))
-        self.ostream.print_header('End of ADC calculation.' + end)
-        self.ostream.print_header('=' * (len(text) + 2))
-        self.ostream.print_blank()
-        self.ostream.flush()
