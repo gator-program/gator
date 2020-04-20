@@ -108,7 +108,8 @@ class AdcTwoDriver:
         :param scf_tensors:
             The tensors from converged SCF wavefunction.
         :return:
-            A dictionary containing excitation energies.
+            A dictionary containing excitation energies and squared S
+            components.
         """
 
         start_time = tm.time()
@@ -299,18 +300,20 @@ class AdcTwoDriver:
             eig_diff = iter_data['eig_diff']
             eig_incr = iter_data['eig_incr']
 
-            # print iteration
-            self.print_iteration(cur_iter, subspace_size, residual_norm,
-                                 cur_root, converged_eigs, omega)
-            cur_iter += 1
-
-            # check convergence
+            # update convergence info
             if (abs(eig_diff) < self.conv_thresh**2 and
                     residual_norm < self.conv_thresh):
                 root_converged[cur_root] = True
                 converged_eigs[cur_root] = omega
                 s_components_2[cur_root] = s_comp_square
 
+            # print iteration
+            self.print_iteration(cur_iter, subspace_size, residual_norm,
+                                 cur_root, converged_eigs, omega,
+                                 root_converged[cur_root])
+            cur_iter += 1
+
+            # update root
             if root_converged[cur_root]:
                 self.ostream.print_info(
                     'State {:d} is converged.'.format(cur_root + 1))
@@ -377,6 +380,18 @@ class AdcTwoDriver:
             return {}
 
     def compute_xA_xB(self, epsilon, mo_indices, mo_integrals):
+        """
+        Computes auxiliary matrices for terms A and B in ADC(2) singles block.
+
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The auxiliary matrices for terms A and B.
+        """
 
         eocc = epsilon['o']
         evir = epsilon['v']
@@ -410,6 +425,25 @@ class AdcTwoDriver:
 
     def compute_sigma(self, trial_mat, reigs, epsilon, auxiliary_matrices,
                       mo_indices, mo_integrals):
+        """
+        Computes sigma vectors for ADC(2).
+
+        :param trial_mat:
+            The trial vectors.
+        :param reigs:
+            The eigenvalue associated with the trial vectors.
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param auxiliary_matrices:
+            The dictionary containing auxiliary matrices (fab, fij, xA_ab,
+            xB_ij).
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The sigma vectors.
+        """
 
         # orbital energies
 
@@ -606,6 +640,22 @@ class AdcTwoDriver:
 
     def compute_d_sigma(self, trial_mat, reigs, epsilon, mo_indices,
                         mo_integrals):
+        """
+        Computes -d_sigma vectors for ADC(2).
+
+        :param trial_mat:
+            The trial vectors.
+        :param reigs:
+            The eigenvalue associated with the trial vectors.
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The -d_sigma vectors.
+        """
 
         # orbital energies
 
@@ -775,7 +825,25 @@ class AdcTwoDriver:
         self.ostream.flush()
 
     def print_iteration(self, cur_iter, subspace_size, residual_norm, cur_root,
-                        converged_eigs, omega):
+                        converged_eigs, omega, omega_converged):
+        """
+        Prints ADC(2) iteration.
+
+        :param cur_iter:
+            The current iteration.
+        :param subspace size:
+            The size of reduced space in the Davidson solver.
+        :param residual_norm:
+            The reisdual norm.
+        :param cur_root:
+            The current root to be solved.
+        :param converged_eigs:
+            The list of converged eigenvalues.
+        :param omega:
+            The the eigenvalue of the current root.
+        :param omega_converged:
+            The flag for convergence of omega.
+        """
 
         # iteration header
 
@@ -793,12 +861,20 @@ class AdcTwoDriver:
             self.ostream.print_header(exec_str.ljust(84))
 
         exec_str = 'State {:2d}: {:5.8f} au'.format(cur_root + 1, omega)
+        if omega_converged:
+            exec_str += '  converged'
         self.ostream.print_header(exec_str.ljust(84))
 
         self.ostream.print_blank()
         self.ostream.flush()
 
     def print_sigma_timing(self, sigma_build_timing):
+        """
+        Prints timing for sigma builds.
+
+        :param sigma_build_timing:
+            The list containing timing information of sigma builds.
+        """
 
         n_sigma, n_dsigma = 0, 0
         t_sigma, t_dsigma = 0.0, 0.0
@@ -832,6 +908,12 @@ class AdcTwoDriver:
 
         :param start_time:
             The start time of calculation.
+        :param converged_eigs:
+            The list of converged eigenvalues.
+        :param s_components_2:
+            The list of squared S components.
+        :param cur_iter:
+            The current iteration.
         """
 
         valstr = '*** {:d} excited states '.format(self.nstates)
