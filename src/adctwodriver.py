@@ -136,6 +136,8 @@ class AdcTwoDriver:
         nocc = molecule.number_of_alpha_electrons()
         nvir = ea.shape[0] - nocc
 
+        self.nstates = min(self.nstates, nocc * nvir)
+
         eocc = ea[:nocc]
         evir = ea[nocc:]
         e_oo = eocc.reshape(-1, 1) + eocc
@@ -336,7 +338,7 @@ class AdcTwoDriver:
             else:
                 max_subspace = self.nstates * 10
 
-            if subspace_size > max_subspace:
+            if (subspace_size > max_subspace or trial_mat.shape[1] == 0):
                 self.ostream.print_info(
                     'Collapsing subspace...'.format(cur_root + 1))
                 self.ostream.print_blank()
@@ -856,11 +858,11 @@ class AdcTwoDriver:
         # excited states information
 
         for i in range(cur_root):
-            exec_str = 'State {:2d}: {:5.8f} au  converged'.format(
+            exec_str = 'State {:2d}:{:15.8f} au  converged'.format(
                 i + 1, converged_eigs[i])
             self.ostream.print_header(exec_str.ljust(84))
 
-        exec_str = 'State {:2d}: {:5.8f} au'.format(cur_root + 1, omega)
+        exec_str = 'State {:2d}:{:15.8f} au'.format(cur_root + 1, omega)
         if omega_converged:
             exec_str += '  converged'
         self.ostream.print_header(exec_str.ljust(84))
