@@ -217,7 +217,8 @@ class AdcTwoDriver:
         converged_eigs = [None] * self.nstates
         s_components_2 = [None] * self.nstates
 
-        solver = BlockDavidsonSolver()
+        if self.rank == mpi_master():
+            solver = BlockDavidsonSolver()
 
         cur_iter = 0
         cur_root = 0
@@ -232,11 +233,10 @@ class AdcTwoDriver:
             t0 = tm.time()
 
             # compute sigma vectors from trial vectors
-            n_trials = trial_mat.shape[1]
-            omega_vec = np.full(trial_mat.shape[1], omega)
-            sigma_mat = self.compute_sigma(trial_mat, omega_vec, epsilon,
-                                           auxiliary_matrices, mo_indices,
-                                           mo_integrals)
+            sigma_mat = self.compute_sigma(trial_mat,
+                                           np.full(trial_mat.shape[1], omega),
+                                           epsilon, auxiliary_matrices,
+                                           mo_indices, mo_integrals)
 
             sigma_build_timing.append(
                 ('sigma', trial_mat.shape[1], tm.time() - t0))
@@ -256,14 +256,14 @@ class AdcTwoDriver:
             t0 = tm.time()
 
             sigma_vecs_from_ritz = self.compute_sigma(
-                ritz_vecs[:, cur_root:cur_root + 1], np.array([omega]), epsilon,
+                ritz_vecs[:, cur_root:cur_root + 1], np.full(1, omega), epsilon,
                 auxiliary_matrices, mo_indices, mo_integrals)
 
             sigma_build_timing.append(('sigma', 1, tm.time() - t0))
             t0 = tm.time()
 
             d_sigma_vecs_from_ritz = self.compute_d_sigma(
-                ritz_vecs[:, cur_root:cur_root + 1], np.array([omega]), epsilon,
+                ritz_vecs[:, cur_root:cur_root + 1], np.full(1, omega), epsilon,
                 mo_indices, mo_integrals)
 
             sigma_build_timing.append(('d_sigma', 1, tm.time() - t0))
@@ -273,29 +273,43 @@ class AdcTwoDriver:
                 tvec = ritz_vecs[:, cur_root]
                 svec = sigma_vecs_from_ritz[:, 0]
                 dsvec = d_sigma_vecs_from_ritz[:, 0]
+
+                subspace_size = solver.reduced_space_size()
                 residual_norm = np.linalg.norm(svec - omega * tvec)
+
                 eig_from_ritz = np.dot(tvec, svec)
                 s_comp_square = 1.0 / (1.0 + np.dot(tvec, dsvec))
                 eig_diff = eig_from_ritz - omega
                 eig_incr = eig_diff * s_comp_square
+
+                iter_data = {
+                    'subspace_size': subspace_size,
+                    'residual_norm': residual_norm,
+                    's_comp_square': s_comp_square,
+                    'eig_diff': eig_diff,
+                    'eig_incr': eig_incr,
+                }
             else:
-                eig_incr = None
+                iter_data = None
+            iter_data = self.comm.bcast(iter_data, root=mpi_master())
 
-            # check convergence
-            if self.rank == mpi_master():
-                self.print_iteration(solver, cur_iter, cur_root, converged_eigs,
-                                     omega, residual_norm)
+            subspace_size = iter_data['subspace_size']
+            residual_norm = iter_data['residual_norm']
+            s_comp_square = iter_data['s_comp_square']
+            eig_diff = iter_data['eig_diff']
+            eig_incr = iter_data['eig_incr']
 
-                if (abs(eig_diff) < self.conv_thresh**2 and
-                        residual_norm < self.conv_thresh):
-                    root_converged[cur_root] = True
-                    converged_eigs[cur_root] = omega
-                    s_components_2[cur_root] = s_comp_square
-
+            # print iteration
+            self.print_iteration(cur_iter, subspace_size, residual_norm,
+                                 cur_root, converged_eigs, omega)
             cur_iter += 1
 
-            root_converged[cur_root] = self.comm.bcast(root_converged[cur_root],
-                                                       root=mpi_master())
+            # check convergence
+            if (abs(eig_diff) < self.conv_thresh**2 and
+                    residual_norm < self.conv_thresh):
+                root_converged[cur_root] = True
+                converged_eigs[cur_root] = omega
+                s_components_2[cur_root] = s_comp_square
 
             if root_converged[cur_root]:
                 self.ostream.print_info(
@@ -306,27 +320,20 @@ class AdcTwoDriver:
                     omega = initial_reigs[cur_root]
                 continue
 
+            # check number of iterations
             if cur_iter >= self.max_iter:
                 break
 
             # update eigenvalue
-            eig_incr = self.comm.bcast(eig_incr, root=mpi_master())
             omega += eig_incr
 
             # collapse subspace if needed
-            collapse_subspace = False
-            if self.rank == mpi_master():
-                if abs(eig_diff) > self.conv_thresh:
-                    max_subspace = self.nstates
-                else:
-                    max_subspace = self.nstates * 10
-                if (n_trials == 0 or
-                        solver.reduced_space_size() > max_subspace):
-                    collapse_subspace = True
-            collapse_subspace = self.comm.bcast(collapse_subspace,
-                                                root=mpi_master())
+            if abs(eig_diff) > self.conv_thresh:
+                max_subspace = self.nstates
+            else:
+                max_subspace = self.nstates * 10
 
-            if collapse_subspace:
+            if subspace_size > max_subspace:
                 self.ostream.print_info(
                     'Collapsing subspace...'.format(cur_root + 1))
                 self.ostream.print_blank()
@@ -626,6 +633,7 @@ class AdcTwoDriver:
 
             for ind, (k, l) in enumerate(mo_indices['oo']):
                 omega_de = reigs[vecind] - (e_vv - eocc[k] - eocc[l])
+                omega_de_2 = omega_de**2
                 ov_kl = mo_integrals['chem_ooov_K'][ind]
                 ind_lk = ind if k == l else (ind + 1 if k < l else ind - 1)
                 ov_lk = mo_integrals['chem_ooov_K'][ind_lk]
@@ -635,7 +643,7 @@ class AdcTwoDriver:
                 # δac (kj|ld) δbc R_jb / (w-e_klcd)
                 jd = ov_kl
                 ja = rjb
-                da = np.matmul(jd.T, ja) / omega_de**2
+                da = np.matmul(jd.T, ja) / omega_de_2
                 # [ 2 (ki|ld) - (li|kd) ] R_ad
                 id_id = 2.0 * ov_kl - ov_lk
                 d_sigma += np.matmul(id_id, da)
@@ -644,7 +652,7 @@ class AdcTwoDriver:
 
                 # δac (lj|ka) δbd R_jb / (w-e_klcd)
                 ja = ov_lk
-                ba = np.matmul(rjb.T, ja) / omega_de**2
+                ba = np.matmul(rjb.T, ja) / omega_de_2
                 # [ 2 (ki|lb) - (li|kb) ] R_ab
                 ib_ib = 2.0 * ov_kl - ov_lk
                 d_sigma += np.matmul(ib_ib, ba)
@@ -654,6 +662,7 @@ class AdcTwoDriver:
 
             for ind, (c, d) in enumerate(mo_indices['vv']):
                 omega_de = reigs[vecind] - (evir[c] + evir[d] - e_oo)
+                omega_de_2 = omega_de**2
                 ov_cd = mo_integrals['chem_vovv_K'][ind]
                 ind_dc = ind if c == d else (ind + 1 if c < d else ind - 1)
                 ov_dc = mo_integrals['chem_vovv_K'][ind_dc]
@@ -663,7 +672,7 @@ class AdcTwoDriver:
                 # δik (dl|cb) δjk R_jb / (w-e_klcd)
                 lb = ov_dc
                 ib = rjb
-                il = np.matmul(ib, lb.T) / omega_de**2
+                il = np.matmul(ib, lb.T) / omega_de_2
                 # [ 2 (dl|ca) - (cl|da) ] R_kl
                 la_la = 2.0 * ov_dc - ov_cd
                 d_sigma += np.matmul(il, la_la)
@@ -672,7 +681,7 @@ class AdcTwoDriver:
 
                 # δik (ci|db) δjl R_jb / (w-e_klcd)
                 ib = ov_cd
-                ij = np.matmul(ib, rjb.T) / omega_de**2
+                ij = np.matmul(ib, rjb.T) / omega_de_2
                 # [ 2 (dj|ca) - (cj|da) ] R_ij
                 ja_ja = 2.0 * ov_dc - ov_cd
                 d_sigma += np.matmul(ij, ja_ja)
@@ -685,6 +694,7 @@ class AdcTwoDriver:
 
             for ind, (l, d) in enumerate(mo_indices['ov']):
                 omega_de = reigs[vecind] - (e_ov + evir[d] - eocc[l])
+                omega_de_2 = omega_de**2
                 oo_J = mo_integrals['chem_ovoo_J'][ind]
                 oo_K = mo_integrals['chem_oovo_K'][ind]
                 vv_J = mo_integrals['chem_ovvv_J'][ind]
@@ -694,7 +704,7 @@ class AdcTwoDriver:
 
                 # δac (ba|ld) δjk R_jb / (w-e_klcd)
                 ba = vv_J
-                ja = np.matmul(rjb, ba) / omega_de**2
+                ja = np.matmul(rjb, ba) / omega_de_2
                 # [ -2 (ij|ld) + (il|jd) ] R_ja
                 ij_ij = -2.0 * oo_J + oo_K
                 d_sigma += np.matmul(ij_ij, ja)
@@ -703,7 +713,7 @@ class AdcTwoDriver:
 
                 # δac (al|bd) δjk R_jb / (w-e_klcd)
                 ab = vv_K
-                ja = np.matmul(rjb, ab.T) / omega_de**2
+                ja = np.matmul(rjb, ab.T) / omega_de_2
                 # [ -2 (il|jd) + (ij|ld) ] R_ja
                 ij_ij = -2.0 * oo_K + oo_J
                 d_sigma += np.matmul(ij_ij, ja)
@@ -712,7 +722,7 @@ class AdcTwoDriver:
 
                 # δik (ij|ld) δbc R_jb / (w-e_klcd)
                 ij = oo_J
-                ib = np.matmul(ij, rjb) / omega_de**2
+                ib = np.matmul(ij, rjb) / omega_de_2
                 # [ -2 (ba|ld) + (bl|ad) ] R_ib
                 ba_ba = -2.0 * vv_J + vv_K
                 d_sigma += np.matmul(ib, ba_ba)
@@ -721,7 +731,7 @@ class AdcTwoDriver:
 
                 # δik (jl|id) δbc R_jb / (w-e_klcd)
                 ji = oo_K
-                ib = np.matmul(ji.T, rjb) / omega_de**2
+                ib = np.matmul(ji.T, rjb) / omega_de_2
                 # [ -2 (bl|ad) + (ba|ld) ] R_ib
                 ba_ba = -2.0 * vv_K + vv_J
                 d_sigma += np.matmul(ib, ba_ba)
@@ -764,14 +774,13 @@ class AdcTwoDriver:
 
         self.ostream.flush()
 
-    def print_iteration(self, solver, cur_iter, cur_root, converged_eigs, omega,
-                        residual_norm):
+    def print_iteration(self, cur_iter, subspace_size, residual_norm, cur_root,
+                        converged_eigs, omega):
 
         # iteration header
 
         exec_str = '*** Iteration: {:3d}'.format(cur_iter + 1)
-        exec_str += ' * Reduced Space: {:4d}'.format(
-            solver.reduced_space_size())
+        exec_str += ' * Reduced Space: {:4d}'.format(subspace_size)
         exec_str += ' * Residual Norm: {:.2e}'.format(residual_norm)
         self.ostream.print_header(exec_str.ljust(84))
         self.ostream.print_blank()
