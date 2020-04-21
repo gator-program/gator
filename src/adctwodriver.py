@@ -9,6 +9,7 @@ from veloxchem import get_qq_type
 
 from .mointsdriver import MOIntegralsDriver
 from .adconedriver import AdcOneDriver
+from .memprofiler import MemoryProfiler
 
 
 class AdcTwoDriver:
@@ -113,6 +114,7 @@ class AdcTwoDriver:
         """
 
         start_time = tm.time()
+        memprof = MemoryProfiler('ADC(2)')
 
         # prepare MO integrals
 
@@ -123,6 +125,24 @@ class AdcTwoDriver:
         })
         mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
                                                       scf_tensors)
+
+        memprof.check_memory_system('MO integrals')
+
+        t0 = tm.time()
+
+        mem_usage = memprof.get_memory_object(mo_integrals)
+        mem_avail = memprof.get_available_memory()
+
+        mem_str = '{:s} of memory used for MO integrals '.format(mem_usage)
+        mem_str += 'on the master node.'
+        self.ostream.print_info(mem_str)
+        mem_str = '{:s} of memory available '.format(mem_avail)
+        mem_str += 'on the master node.'
+        self.ostream.print_info(mem_str)
+        mem_str = 'Time spent in calculating memory usage: {:.2f} sec.'.format(
+            tm.time() - t0)
+        self.ostream.print_info(mem_str)
+        self.ostream.print_blank()
 
         # prepare orbital energies
 
@@ -206,13 +226,15 @@ class AdcTwoDriver:
         diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
 
         if self.rank == mpi_master():
-            initial_trials = adc_one_results['eigenvectors'].copy()
-            initial_reigs = adc_one_results['eigenvalues'].copy()
+            initial_trials = adc_one_results['eigenvectors']
+            initial_reigs = adc_one_results['eigenvalues']
         else:
             initial_trials = None
             initial_reigs = None
         initial_trials = self.comm.bcast(initial_trials, root=mpi_master())
         initial_reigs = self.comm.bcast(initial_reigs, root=mpi_master())
+
+        memprof.check_memory_system('Initial guess')
 
         # start ADC(2) iterations
 
@@ -248,7 +270,7 @@ class AdcTwoDriver:
             if self.rank == mpi_master():
                 solver.add_iteration_data(sigma_mat, trial_mat, cur_iter)
                 trial_mat = solver.compute(diag_mat)
-                ritz_vecs = solver.ritz_vectors.copy()
+                ritz_vecs = solver.ritz_vectors
             else:
                 trial_mat = None
                 ritz_vecs = None
@@ -315,6 +337,8 @@ class AdcTwoDriver:
                                  root_converged[cur_root])
             cur_iter += 1
 
+            memprof.check_memory_system('Iteration {:d}'.format(cur_iter))
+
             # update root
             if root_converged[cur_root]:
                 self.ostream.print_info(
@@ -371,6 +395,7 @@ class AdcTwoDriver:
             self.print_sigma_timing(sigma_build_timing)
             self.print_convergence(start_time, converged_eigs, s_components_2,
                                    cur_iter)
+            memprof.print_memory_usage(self.ostream)
             if self.is_converged:
                 return {
                     'eigenvalues': np.array(converged_eigs),
