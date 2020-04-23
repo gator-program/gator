@@ -312,7 +312,7 @@ class AdcTwoDriver:
                 residual_norm = np.linalg.norm(svec - omega * tvec)
 
                 eig_from_ritz = np.dot(tvec, svec)
-                s_comp_square = 1.0 / (1.0 + np.dot(tvec, dsvec))
+                s_comp_square = 1.0 / (1.0 - np.dot(tvec, dsvec))
                 eig_diff = eig_from_ritz - omega
                 eig_incr = eig_diff * s_comp_square
 
@@ -679,7 +679,7 @@ class AdcTwoDriver:
     def compute_d_sigma(self, trial_mat, reigs, epsilon, mo_indices,
                         mo_integrals):
         """
-        Computes -d_sigma vectors for ADC(2).
+        Computes d_sigma vectors for ADC(2).
 
         :param trial_mat:
             The trial vectors.
@@ -824,7 +824,8 @@ class AdcTwoDriver:
                 ba_ba = -2.0 * vv_K + vv_J
                 d_sigma += np.matmul(ib, ba_ba)
 
-            d_sigma_mat[:, vecind] = d_sigma.reshape(nocc * nvir)[:]
+            # minus sign from derivative
+            d_sigma_mat[:, vecind] = -d_sigma.reshape(nocc * nvir)[:]
 
         d_sigma_mat = self.comm.reduce(d_sigma_mat,
                                        op=MPI.SUM,
