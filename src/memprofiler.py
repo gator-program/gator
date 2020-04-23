@@ -14,7 +14,6 @@ class MemoryProfiler:
         - remark: Descriptive text about the task that is being monitored.
         - time_start: The starting time.
         - avail_mem_start: The starting available memory.
-        - total_mem: The total memory.
         - memory_usage: The list containing information about memory
           usage.
     """
@@ -27,7 +26,6 @@ class MemoryProfiler:
         self.remark = remark
         self.time_start = tm.time()
         self.avail_mem_start = psutil.virtual_memory().available
-        self.total_mem = psutil.virtual_memory().total
         self.memory_usage = [(0, 0, self.remark + ' start')]
 
     def check_memory_system(self, remark=''):
@@ -79,8 +77,8 @@ class MemoryProfiler:
         max_used_mem = max([mem for dt, mem, remark in self.memory_usage])
         mem_str = 'Maximum memory usage: {:s} out of {:s} ({:.1f}%)'.format(
             self.memory_string(max_used_mem),
-            self.memory_string(self.total_mem),
-            max_used_mem / self.total_mem * 100.0,
+            self.memory_string(self.avail_mem_start),
+            max_used_mem / self.avail_mem_start * 100.0,
         )
         ostream.print_header(mem_str.ljust(92))
         ostream.print_blank()

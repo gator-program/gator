@@ -35,6 +35,7 @@ class AdcTwoDriver:
         - is_converged: The flag for excited states convergence.
         - rank: The rank of MPI process.
         - nodes: The number of MPI processes.
+        - memory_profiling: The flag for printing memory usage.
     """
 
     def __init__(self, comm, ostream):
@@ -63,6 +64,8 @@ class AdcTwoDriver:
 
         # output stream
         self.ostream = ostream
+
+        self.memory_profiling = False
 
     def update_settings(self, settings, scf_drv=None):
         """
@@ -98,6 +101,10 @@ class AdcTwoDriver:
             # inherit from SCF
             self.qq_type = scf_drv.qq_type
 
+        if 'memory_profiling' in settings:
+            key = settings['memory_profiling'].lower()
+            self.memory_profiling = True if key in ['yes', 'y'] else False
+
     def compute(self, molecule, basis, scf_tensors):
         """
         Performs ADC(2) calculation.
@@ -121,12 +128,13 @@ class AdcTwoDriver:
         moints_drv = MOIntegralsDriver(self.comm, self.ostream)
         moints_drv.update_settings({
             'qq_type': self.qq_type,
-            'eri_thresh': self.eri_thresh
+            'eri_thresh': self.eri_thresh,
         })
         mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
                                                       scf_tensors)
 
-        memprof.check_memory_system('MO integrals')
+        if self.memory_profiling:
+            memprof.check_memory_system('MO integrals')
 
         t0 = tm.time()
 
@@ -234,7 +242,8 @@ class AdcTwoDriver:
         initial_trials = self.comm.bcast(initial_trials, root=mpi_master())
         initial_reigs = self.comm.bcast(initial_reigs, root=mpi_master())
 
-        memprof.check_memory_system('Initial guess')
+        if self.memory_profiling:
+            memprof.check_memory_system('Begin of iterations')
 
         # start ADC(2) iterations
 
@@ -337,8 +346,6 @@ class AdcTwoDriver:
                                  root_converged[cur_root])
             cur_iter += 1
 
-            memprof.check_memory_system('Iteration {:d}'.format(cur_iter))
-
             # update root
             if root_converged[cur_root]:
                 self.ostream.print_info(
@@ -390,12 +397,16 @@ class AdcTwoDriver:
             if not root_converged[root]:
                 self.is_converged = False
 
+        if self.memory_profiling:
+            memprof.check_memory_system('End of iterations')
+
         # print converged excited states
         if self.rank == mpi_master():
             self.print_sigma_timing(sigma_build_timing)
             self.print_convergence(start_time, converged_eigs, s_components_2,
                                    cur_iter)
-            memprof.print_memory_usage(self.ostream)
+            if self.memory_profiling:
+                memprof.print_memory_usage(self.ostream)
             if self.is_converged:
                 return {
                     'eigenvalues': np.array(converged_eigs),
