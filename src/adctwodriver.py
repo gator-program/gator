@@ -202,12 +202,22 @@ class AdcTwoDriver:
 
         # print ADC(2) header
 
+        self.print_header()
+        self.ostream.print_info(
+            'Number of occupied orbitals: {:d}'.format(nocc))
+        self.ostream.print_info('Number of virtual orbitals: {:d}'.format(nvir))
+        self.ostream.print_blank()
+
+        # get MP2 energy
+
+        t0 = tm.time()
+
+        e_mp2 = self.compute_mp2_energy(epsilon, mo_indices, mo_integrals)
+
         if self.rank == mpi_master():
-            self.print_header()
-            self.ostream.print_info(
-                'Number of occupied orbitals: {:d}'.format(nocc))
-            self.ostream.print_info(
-                'Number of virtual orbitals: {:d}'.format(nvir))
+            mp2_str = 'MP2 correlation energy: {:.10f} a.u. '.format(e_mp2)
+            mp2_str += 'Time: {:.2f} sec.'.format(tm.time() - t0)
+            self.ostream.print_info(mp2_str)
             self.ostream.print_blank()
 
         # get initial guess from ADC(1)
@@ -409,6 +419,7 @@ class AdcTwoDriver:
                 memprof.print_memory_usage(self.ostream)
             if self.is_converged:
                 return {
+                    'mp2_energy': e_mp2,
                     'eigenvalues': np.array(converged_eigs),
                     's_components_2': np.array(s_components_2),
                 }
@@ -416,6 +427,35 @@ class AdcTwoDriver:
                 return {}
         else:
             return {}
+
+    def compute_mp2_energy(self, epsilon, mo_indices, mo_integrals):
+        """
+        Computes MP2 correlation energy.
+
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The MP2 correlation energy.
+        """
+
+        eocc = epsilon['o']
+        e_vv = epsilon['vv']
+
+        e_mp2 = 0.0
+
+        # [ 2 (ai|bj) - (aj|bi) ] (ai|bj) / e_ijab
+        for ind, (i, j) in enumerate(mo_indices['oo']):
+            de = eocc[i] + eocc[j] - e_vv
+            ab = mo_integrals['chem_ovov_K'][ind]
+            e_mp2 += np.sum((2.0 * ab - ab.T) * ab / de)
+
+        e_mp2 = self.comm.reduce(e_mp2, op=MPI.SUM, root=mpi_master())
+
+        return e_mp2
 
     def compute_xA_xB(self, epsilon, mo_indices, mo_integrals):
         """

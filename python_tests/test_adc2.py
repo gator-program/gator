@@ -11,7 +11,7 @@ from gator.adctwodriver import AdcTwoDriver
 
 class TestADC2(unittest.TestCase):
 
-    def run_adc2(self, inpfile, data_lines):
+    def run_adc2(self, inpfile, ref_e_mp2, data_lines):
 
         task = GatorTask(inpfile, None, MPI.COMM_WORLD)
         task.input_dict['scf']['checkpoint_file'] = None
@@ -31,8 +31,10 @@ class TestADC2(unittest.TestCase):
                                       scf_drv.scf_tensors)
 
         if task.mpi_rank == mpi_master():
+            e_mp2 = adc_results['mp2_energy']
             exc_ene = adc_results['eigenvalues']
             s_comp2 = adc_results['s_components_2']
+            self.assertTrue(np.max(np.abs(e_mp2 - ref_e_mp2)) < 1.0e-10)
             self.assertTrue(np.max(np.abs(exc_ene - ref_exc_ene)) < 1.0e-7)
             self.assertTrue(np.max(np.abs(s_comp2 - ref_s_comp2)) < 1.0e-4)
 
@@ -51,7 +53,9 @@ class TestADC2(unittest.TestCase):
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
-        self.run_adc2(inpfile, data_lines)
+        ref_e_mp2 = -0.0342588021
+
+        self.run_adc2(inpfile, ref_e_mp2, data_lines)
 
     def test_adc2_def2svp(self):
 
@@ -68,7 +72,9 @@ class TestADC2(unittest.TestCase):
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
-        self.run_adc2(inpfile, data_lines)
+        ref_e_mp2 = -0.2026678840
+
+        self.run_adc2(inpfile, ref_e_mp2, data_lines)
 
     def test_adc2_augccpvdz(self):
 
@@ -85,7 +91,9 @@ class TestADC2(unittest.TestCase):
         """
         data_lines = raw_data.split(os.linesep)[1:-1]
 
-        self.run_adc2(inpfile, data_lines)
+        ref_e_mp2 = -0.2209861606
+
+        self.run_adc2(inpfile, ref_e_mp2, data_lines)
 
 
 if __name__ == "__main__":
