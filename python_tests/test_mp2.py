@@ -14,6 +14,7 @@ class TestMP2(unittest.TestCase):
 
         task = GatorTask(inpfile, None, MPI.COMM_WORLD)
         task.input_dict['scf']['checkpoint_file'] = None
+        task.input_dict['scf']['conv_thresh'] = '1.0e-8'
 
         scf_drv = ScfRestrictedDriver(task.mpi_comm, task.ostream)
         scf_drv.update_settings(task.input_dict['scf'],
@@ -34,7 +35,7 @@ class TestMP2(unittest.TestCase):
         if not os.path.isfile(inpfile):
             inpfile = os.path.join('python_tests', inpfile)
 
-        ref_e_mp2 = -0.034258802148
+        ref_e_mp2 = -0.0342588021
 
         self.run_mp2(inpfile, ref_e_mp2)
 
@@ -44,7 +45,7 @@ class TestMP2(unittest.TestCase):
         if not os.path.isfile(inpfile):
             inpfile = os.path.join('python_tests', inpfile)
 
-        ref_e_mp2 = -0.202667884590
+        ref_e_mp2 = -0.2026678840
 
         self.run_mp2(inpfile, ref_e_mp2)
 
@@ -54,7 +55,7 @@ class TestMP2(unittest.TestCase):
         if not os.path.isfile(inpfile):
             inpfile = os.path.join('python_tests', inpfile)
 
-        ref_e_mp2 = -0.220986160311
+        ref_e_mp2 = -0.2209861606
 
         self.run_mp2(inpfile, ref_e_mp2)
 
