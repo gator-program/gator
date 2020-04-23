@@ -72,6 +72,8 @@ def main():
                                               scf_drv.scf_tensors)
         adc_rsp_drv.print_rsp_functions(adc_rsp_results['response_functions'])
 
+    task.finish()
+
 
 if __name__ == "__main__":
     main()
