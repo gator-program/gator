@@ -1,6 +1,7 @@
 from mpi4py import MPI
 import numpy as np
 import time as tm
+import math
 
 from veloxchem import BlockDavidsonSolver
 from veloxchem import mpi_master
@@ -258,8 +259,9 @@ class AdcTwoDriver:
         # start ADC(2) iterations
 
         root_converged = [False] * self.nstates
-        converged_eigs = [None] * self.nstates
-        s_components_2 = [None] * self.nstates
+        converged_eigs = np.zeros(self.nstates)
+        converged_vecs = np.zeros((nocc * nvir, self.nstates))
+        s_components_2 = np.zeros(self.nstates)
 
         if self.rank == mpi_master():
             solver = BlockDavidsonSolver()
@@ -348,6 +350,7 @@ class AdcTwoDriver:
                     residual_norm < self.conv_thresh):
                 root_converged[cur_root] = True
                 converged_eigs[cur_root] = omega
+                converged_vecs[:, cur_root] = ritz_vecs[:, cur_root]
                 s_components_2[cur_root] = s_comp_square
 
             # print iteration
@@ -413,15 +416,16 @@ class AdcTwoDriver:
         # print converged excited states
         if self.rank == mpi_master():
             self.print_sigma_timing(sigma_build_timing)
-            self.print_convergence(start_time, converged_eigs, s_components_2,
-                                   cur_iter)
+            self.print_convergence(start_time, converged_eigs, converged_vecs,
+                                   s_components_2, cur_iter, nocc, nvir)
             if self.memory_profiling:
                 memprof.print_memory_usage(self.ostream)
             if self.is_converged:
                 return {
                     'mp2_energy': e_mp2,
-                    'eigenvalues': np.array(converged_eigs),
-                    's_components_2': np.array(s_components_2),
+                    'eigenvalues': converged_eigs,
+                    'eigenvectors': converged_vecs,
+                    's_components_2': s_components_2,
                 }
             else:
                 return {}
@@ -980,8 +984,8 @@ class AdcTwoDriver:
         self.ostream.print_info(valstr.ljust(92))
         self.ostream.print_blank()
 
-    def print_convergence(self, start_time, converged_eigs, s_components_2,
-                          cur_iter):
+    def print_convergence(self, start_time, converged_eigs, converged_vecs,
+                          s_components_2, cur_iter, nocc, nvir):
         """
         Prints convergence and excited state information.
 
@@ -989,10 +993,16 @@ class AdcTwoDriver:
             The start time of calculation.
         :param converged_eigs:
             The list of converged eigenvalues.
+        :param converged_vecs:
+            The list of converged eigenvectors.
         :param s_components_2:
             The list of squared S components.
         :param cur_iter:
             The current iteration.
+        :param nocc:
+            The number of occupied orbitals.
+        :param nvir:
+            The number of virtual orbitals.
         """
 
         valstr = '*** {:d} excited states '.format(self.nstates)
@@ -1005,6 +1015,7 @@ class AdcTwoDriver:
         self.ostream.print_header(valstr.ljust(92))
         self.ostream.print_blank()
         self.ostream.print_blank()
+
         if self.is_converged:
             valstr = 'ADC(2) excited states'
             self.ostream.print_header(valstr.ljust(92))
@@ -1016,5 +1027,31 @@ class AdcTwoDriver:
                 valstr += '    |v1|^2={:.4f}'.format(s_components_2[s])
                 self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_blank()
+
+            for s in range(self.nstates):
+                valstr = 'State S{:d}'.format(s + 1)
+                self.ostream.print_header(valstr.ljust(92))
+                self.ostream.print_header(('-' * 31).ljust(92))
+
+                excitations = []
+                prefac = math.sqrt(s_components_2[s])
+                for i in range(nocc):
+                    for a in range(nvir):
+                        ia = i * nvir + a
+                        coef = prefac * converged_vecs[ia, s]
+                        if abs(coef) > 0.05:
+                            homo = 'HOMO'
+                            if i < nocc - 1:
+                                homo += '-{:d}'.format(nocc - 1 - i)
+                            lumo = 'LUMO'
+                            if a > 0:
+                                lumo += '+{:d}'.format(a)
+                            exc_str = '{:<8s} -> {:<8s} '.format(homo, lumo)
+                            exc_str += '{:10.4f}'.format(coef)
+                            excitations.append((abs(coef), exc_str))
+
+                for abs_coef, exc_str in sorted(excitations, reverse=True):
+                    self.ostream.print_header(exc_str.ljust(92))
+                self.ostream.print_blank()
             self.ostream.print_blank()
         self.ostream.flush()
