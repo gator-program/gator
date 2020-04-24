@@ -9,7 +9,7 @@ from veloxchem import get_qq_type
 
 from .mointsdriver import MOIntegralsDriver
 from .adconedriver import AdcOneDriver
-from .memprofiler import MemoryProfiler
+from .memoryprofiler import MemoryProfiler
 
 
 class AdcTwoDriver:
