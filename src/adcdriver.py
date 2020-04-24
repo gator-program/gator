@@ -1,5 +1,4 @@
 from veloxchem import mpi_master
-import time as tm
 import os
 
 
@@ -48,7 +47,7 @@ class AdcDriver:
         self.ostream = ostream
 
         # default ADC settings
-        self.adc_tol = 1e-4
+        self.adc_tol = 1e-6
         self.adc_method = 'adc2'
         self.adc_states = 3
         self.adc_singlets = None
@@ -59,7 +58,7 @@ class AdcDriver:
         self.adc_frozen_virtual = None
         self.print_states = False
 
-    def update_settings(self, adc_dict):
+    def update_settings(self, adc_dict, scf_drv=None):
         """
         Updates settings in ADC driver.
 
@@ -69,6 +68,16 @@ class AdcDriver:
 
         if 'tol' in adc_dict:
             self.adc_tol = float(adc_dict['tol'])
+        elif scf_drv is not None:
+            self.adc_tol = max(scf_drv.conv_thresh / 100, 1e-6)
+            if scf_drv.conv_thresh > self.adc_tol:
+                error_text = os.linesep + os.linesep
+                error_text += '*** SCF convergence threshold '
+                error_text += '({:.1e}) '.format(scf_drv.conv_thresh)
+                error_text += 'needs to be lower than ADC convergence '
+                error_text += 'tolerance ({:.1e})'.format(self.adc_tol)
+                error_text += os.linesep
+                raise ValueError(error_text)
 
         if 'states' in adc_dict:
             self.adc_states = int(adc_dict['states'])
@@ -113,7 +122,8 @@ class AdcDriver:
                 self.adc_frozen_virtual = orbs
 
         if 'print_states' in adc_dict:
-            self.print_states = True
+            key = adc_dict['print_states'].lower()
+            self.print_states = True if key in ['yes', 'y'] else False
 
     def compute(self, task, scf_drv):
         """
@@ -125,7 +135,6 @@ class AdcDriver:
             The converged SCF driver.
         """
 
-        start_time = tm.time()
         scf_drv.task = task
 
         if self.rank == mpi_master():
@@ -157,7 +166,7 @@ class AdcDriver:
             if self.print_states:
                 self.print_detailed_states(adc_drv)
 
-            self.print_finish_header(adc_drv, start_time)
+            self.print_convergence(adc_drv)
 
     def print_header(self):
         """
@@ -223,36 +232,18 @@ class AdcDriver:
         self.ostream.print_blank()
         self.ostream.flush()
 
-    def print_finish_header(self, adc_drv, start_time):
+    def print_convergence(self, adc_drv):
         """
         Prints finish header to output stream.
-
-        :param start_time:
-            The start time of the computation.
         """
-
-        end_time = tm.time()
 
         end = ' All went well!'
         if not hasattr(adc_drv, "converged"):
             self.ostream.print_header('NOT CONVERGED')
             end = ' Did NOT converge.'
 
-        self.ostream.print_header('=' * (58))
         self.ostream.print_header('End of ADC calculation.' + end)
-        self.ostream.print_header('=' * (58))
         self.ostream.print_blank()
-        self.ostream.flush()
-
-        self.ostream.print_separator()
-        exec_str = "Gator execution completed at "
-        exec_str += tm.asctime(tm.localtime(end_time)) + "."
-        self.ostream.print_title(exec_str)
-        self.ostream.print_separator()
-        exec_str = "Total execution time is "
-        exec_str += "{:.2f}".format(end_time - start_time) + " sec."
-        self.ostream.print_title(exec_str)
-        self.ostream.print_separator()
         self.ostream.flush()
 
     def print_excited_states(self, adc_drv):
@@ -262,14 +253,13 @@ class AdcDriver:
         :param adc_drv:
             The ADC driver.
         """
+
         self.ostream.print_blank()
         text = 'ADC Summary of Results'
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
         self.ostream.print_block(adc_drv.describe())
-        self.ostream.print_blank()
-        self.ostream.print_blank()
 
     def print_detailed_states(self, adc_drv):
         """
@@ -278,11 +268,11 @@ class AdcDriver:
         :param adc_drv:
             The ADC driver.
         """
+
         self.ostream.print_blank()
         text = 'ADC Excited States'
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
         self.ostream.print_block(adc_drv.describe_amplitudes())
-        self.ostream.print_blank()
         self.ostream.print_blank()

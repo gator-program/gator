@@ -42,7 +42,7 @@ def main():
     if task_type == 'adc':
         adc_drv = AdcDriver(comm, ostream)
         adc_dict = input_dict['adc'] if 'adc' in input_dict else {}
-        adc_drv.update_settings(adc_dict)
+        adc_drv.update_settings(adc_dict, scf_drv)
         adc_drv.compute(task, scf_drv)
 
     if task_type == 'mp2':
