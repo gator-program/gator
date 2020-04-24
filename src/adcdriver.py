@@ -1,7 +1,6 @@
-from adcc import run_adc
 from veloxchem import mpi_master
-from veloxchem import hartree_in_ev
 import time as tm
+import os
 
 
 class AdcDriver:
@@ -132,6 +131,16 @@ class AdcDriver:
         if self.rank == mpi_master():
             self.print_header()
 
+            try:
+                from adcc import run_adc
+            except ImportError:
+                error_text = os.linesep + os.linesep
+                error_text += '*** Unable to import adcc. ' + os.linesep
+                error_text += '*** Please download and install '
+                error_text += 'from https://github.com/adc-connect/adcc'
+                error_text += os.linesep
+                raise ImportError(error_text)
+
             adc_drv = run_adc(scf_drv,
                               method=self.adc_method,
                               core_orbitals=self.adc_core_orbitals,
@@ -154,7 +163,7 @@ class AdcDriver:
         """
         Prints header for the ADC driver.
         """
-        #start_time = tm.time()
+
         self.ostream.print_blank()
         text = 'Algebraic Diagrammatic Construction (ADC)'
         self.ostream.print_header(text)
@@ -213,7 +222,6 @@ class AdcDriver:
 
         self.ostream.print_blank()
         self.ostream.flush()
-        #return start_time
 
     def print_finish_header(self, adc_drv, start_time):
         """
@@ -222,12 +230,11 @@ class AdcDriver:
         :param start_time:
             The start time of the computation.
         """
+
         end_time = tm.time()
 
         end = ' All went well!'
-        if hasattr(adc_drv, "converged"):
-            pass
-        else:
+        if not hasattr(adc_drv, "converged"):
             self.ostream.print_header('NOT CONVERGED')
             end = ' Did NOT converge.'
 
@@ -246,8 +253,6 @@ class AdcDriver:
         exec_str += "{:.2f}".format(end_time - start_time) + " sec."
         self.ostream.print_title(exec_str)
         self.ostream.print_separator()
-        #exec_str = "ADC execution time is "
-        #sec_str += "{:.2f}".format(adc_drv.tim
         self.ostream.flush()
 
     def print_excited_states(self, adc_drv):
@@ -262,20 +267,7 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        text = adc_drv.describe()
-        for line in text.splitlines():
-            self.ostream.print_header(line)
-
-        #text = "Index |     Excitation Energy, eV    |   Oscillator Strength  "
-        #self.ostream.print_header(text)
-#        for i in range(len(adc_drv.excitation_energies)):
-#            en = adc_drv.excitation_energies[i] * hartree_in_ev()
-#            osc = adc_drv.oscillator_strengths[i]
-#            exec_str = " " + (str(i + 1)).rjust(3) + 4 * " "
-#            exec_str += ("{:7.5f}".format(en)).center(27) + 3 * " "
-#            exec_str += ("{:5.5f}".format(osc)).center(17) + 3 * " "
-#            self.ostream.print_header(exec_str)
-#            self.ostream.flush()
+        self.ostream.print_block(adc_drv.describe())
         self.ostream.print_blank()
         self.ostream.print_blank()
 
@@ -291,10 +283,6 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        text = adc_drv.describe_amplitudes()
-        for line in text.splitlines():
-            self.ostream.print_header(line)
-
+        self.ostream.print_block(adc_drv.describe_amplitudes())
         self.ostream.print_blank()
         self.ostream.print_blank()
-

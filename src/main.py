@@ -4,8 +4,8 @@ import sys
 from .mpiutils import mpi_sanity_check
 from .gatortask import GatorTask
 from .scfdriver import ScfRestrictedDriver
-from .mp2driver import Mp2Driver
 from .adcdriver import AdcDriver
+from .mp2driver import Mp2Driver
 from .adconedriver import AdcOneDriver
 from .adctwodriver import AdcTwoDriver
 
