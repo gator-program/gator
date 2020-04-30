@@ -261,6 +261,7 @@ class AdcTwoDriver:
         root_converged = [False] * self.nstates
         converged_eigs = np.zeros(self.nstates)
         converged_vecs = np.zeros((nocc * nvir, self.nstates))
+        s_components_2 = np.zeros(self.nstates)
 
         if self.rank == mpi_master():
             solver = BlockDavidsonSolver()
@@ -291,11 +292,14 @@ class AdcTwoDriver:
                 solver.add_iteration_data(sigma_mat, trial_mat, cur_iter)
                 trial_mat = solver.compute(diag_mat)
                 ritz_vecs = solver.ritz_vectors
+                reigs = solver.residual_eigs
             else:
                 trial_mat = None
                 ritz_vecs = None
+                reigs = None
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
+            reigs = self.comm.bcast(reigs, root=mpi_master())
 
             # compute sigma and d_sigma vectors for current root
             t0 = tm.time()
@@ -322,9 +326,8 @@ class AdcTwoDriver:
                 subspace_size = solver.reduced_space_size()
                 residual_norm = np.linalg.norm(svec - omega * tvec)
 
-                eig_from_ritz = np.dot(tvec, svec)
                 s_comp_square = 1.0 / (1.0 - np.dot(tvec, dsvec))
-                eig_diff = eig_from_ritz - omega
+                eig_diff = np.dot(tvec, svec) - omega
                 eig_incr = eig_diff * s_comp_square
 
                 iter_data = {
@@ -345,12 +348,12 @@ class AdcTwoDriver:
             eig_incr = iter_data['eig_incr']
 
             # update convergence info
-            if (abs(eig_diff) < self.conv_thresh**2 and
+            if (abs(eig_diff) < self.conv_thresh * 1e-4 and
                     residual_norm < self.conv_thresh):
                 root_converged[cur_root] = True
                 converged_eigs[cur_root] = omega
-                prefac = math.sqrt(s_comp_square)
-                converged_vecs[:, cur_root] = prefac * ritz_vecs[:, cur_root]
+                converged_vecs[:, cur_root] = ritz_vecs[:, cur_root]
+                s_components_2[cur_root] = s_comp_square
 
             # print iteration
             self.print_iteration(cur_iter, subspace_size, residual_norm,
@@ -365,7 +368,7 @@ class AdcTwoDriver:
                 self.ostream.print_blank()
                 cur_root += 1
                 if cur_root < self.nstates:
-                    omega = initial_reigs[cur_root]
+                    omega = reigs[cur_root]
                 continue
 
             # check number of iterations
@@ -415,8 +418,9 @@ class AdcTwoDriver:
         # print converged excited states
         if self.rank == mpi_master():
             self.print_sigma_timing(sigma_build_timing)
+            self.orthogonalize(converged_eigs, converged_vecs)
             self.print_convergence(start_time, converged_eigs, converged_vecs,
-                                   cur_iter, nocc, nvir)
+                                   s_components_2, cur_iter, nocc, nvir)
             if self.memory_profiling:
                 memprof.print_memory_usage(self.ostream)
             if self.is_converged:
@@ -424,6 +428,7 @@ class AdcTwoDriver:
                     'mp2_energy': e_mp2,
                     'eigenvalues': converged_eigs,
                     'eigenvectors': converged_vecs,
+                    's_components_2': s_components_2,
                 }
             else:
                 return {}
@@ -875,6 +880,51 @@ class AdcTwoDriver:
 
         return d_sigma_mat
 
+    def orthogonalize(self, converged_eigs, converged_vecs):
+        """
+        Orthogonalizes eigenvectors associated with degenerate eigenvalues.
+
+        :param converged_eigs:
+            The list of converged eigenvalues.
+        :param converged_vecs:
+            The list of converged eigenvectors.
+        """
+
+        degenerate = [None] * self.nstates
+
+        # find degenerate states
+        for s1 in range(self.nstates):
+            if degenerate[s1] is not None:
+                continue
+            for s2 in range(s1 + 1, self.nstates):
+                if degenerate[s2] is not None:
+                    continue
+                if (abs(converged_eigs[s1] - converged_eigs[s2]) <
+                        self.conv_thresh * 1e-4):
+                    degenerate[s1] = s1
+                    degenerate[s2] = s1
+
+        # orthogonalize degenerate states
+        for s1 in range(self.nstates):
+            if degenerate[s1] != s1:
+                continue
+
+            mask = [degenerate[s2] == s1 for s2 in range(self.nstates)]
+            tvecs = converged_vecs[:, mask].copy()
+
+            # modified Gram-Schmidt
+            tvecs[:, 0] /= np.linalg.norm(tvecs[:, 0])
+            for i in range(1, tvecs.shape[1]):
+                for j in range(i):
+                    dot_ij = np.dot(tvecs[:, i], tvecs[:, j])
+                    dot_jj = np.dot(tvecs[:, j], tvecs[:, j])
+                    tvecs[:, i] -= (dot_ij / dot_jj) * tvecs[:, j]
+                tvecs[:, i] /= np.linalg.norm(tvecs[:, i])
+
+            indices = [s2 for s2 in range(self.nstates) if degenerate[s2] == s1]
+            for i, ind in enumerate(indices):
+                converged_vecs[:, ind] = tvecs[:, i]
+
     def print_header(self):
         """
         Prints ADC(2) driver setup header to output stream.
@@ -983,7 +1033,7 @@ class AdcTwoDriver:
         self.ostream.print_blank()
 
     def print_convergence(self, start_time, converged_eigs, converged_vecs,
-                          cur_iter, nocc, nvir):
+                          s_components_2, cur_iter, nocc, nvir):
         """
         Prints convergence and excited state information.
 
@@ -993,6 +1043,8 @@ class AdcTwoDriver:
             The list of converged eigenvalues.
         :param converged_vecs:
             The list of converged eigenvectors.
+        :param s_components_2:
+            The list of squared S components.
         :param cur_iter:
             The current iteration.
         :param nocc:
@@ -1020,8 +1072,7 @@ class AdcTwoDriver:
                 valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
-                valstr += '    |v1|^2={:.4f}'.format(
-                    np.linalg.norm(converged_vecs[:, s])**2)
+                valstr += '    |v1|^2={:.4f}'.format(s_components_2[s])
                 self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_blank()
 
@@ -1031,10 +1082,11 @@ class AdcTwoDriver:
                 self.ostream.print_header(('-' * 31).ljust(92))
 
                 excitations = []
+                prefac = math.sqrt(s_components_2[s])
                 for i in range(nocc):
                     for a in range(nvir):
                         ia = i * nvir + a
-                        coef = converged_vecs[ia, s]
+                        coef = prefac * converged_vecs[ia, s]
                         if abs(coef) > 0.05:
                             homo = 'HOMO'
                             if i < nocc - 1:
