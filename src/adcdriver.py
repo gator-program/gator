@@ -142,6 +142,7 @@ class AdcDriver:
 
             try:
                 from adcc import run_adc
+				from adcc import set_n_threads
             except ImportError:
                 error_text = os.linesep + os.linesep
                 error_text += '*** Unable to import adcc. ' + os.linesep
@@ -150,6 +151,8 @@ class AdcDriver:
                 error_text += os.linesep
                 raise ImportError(error_text)
 
+			#set threads in adcc to the same number of threads used by veloxchem
+			#set_n_threads(omp_num_threads)
             adc_drv = run_adc(scf_drv,
                               method=self.adc_method,
                               core_orbitals=self.adc_core_orbitals,
