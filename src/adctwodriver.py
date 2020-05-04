@@ -292,14 +292,11 @@ class AdcTwoDriver:
                 solver.add_iteration_data(sigma_mat, trial_mat, cur_iter)
                 trial_mat = solver.compute(diag_mat)
                 ritz_vecs = solver.ritz_vectors
-                reigs = solver.residual_eigs
             else:
                 trial_mat = None
                 ritz_vecs = None
-                reigs = None
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
-            reigs = self.comm.bcast(reigs, root=mpi_master())
 
             # compute sigma and d_sigma vectors for current root
             t0 = tm.time()
@@ -352,7 +349,8 @@ class AdcTwoDriver:
                     residual_norm < self.conv_thresh):
                 root_converged[cur_root] = True
                 converged_eigs[cur_root] = omega
-                converged_vecs[:, cur_root] = ritz_vecs[:, cur_root]
+                converged_vecs[:, cur_root] = self.find_eigenvector(
+                    cur_root, omega, converged_eigs, converged_vecs, ritz_vecs)
                 s_components_2[cur_root] = s_comp_square
 
             # print iteration
@@ -368,7 +366,9 @@ class AdcTwoDriver:
                 self.ostream.print_blank()
                 cur_root += 1
                 if cur_root < self.nstates:
-                    omega = reigs[cur_root]
+                    if self.rank == mpi_master():
+                        omega = solver.residual_eigs[cur_root]
+                    omega = self.comm.bcast(omega, root=mpi_master())
                 continue
 
             # check number of iterations
@@ -418,7 +418,6 @@ class AdcTwoDriver:
         # print converged excited states
         if self.rank == mpi_master():
             self.print_sigma_timing(sigma_build_timing)
-            self.orthogonalize(converged_eigs, converged_vecs)
             self.print_convergence(start_time, converged_eigs, converged_vecs,
                                    s_components_2, cur_iter, nocc, nvir)
             if self.memory_profiling:
@@ -880,50 +879,56 @@ class AdcTwoDriver:
 
         return d_sigma_mat
 
-    def orthogonalize(self, converged_eigs, converged_vecs):
+    def find_eigenvector(self, cur_root, omega, converged_eigs, converged_vecs,
+                         ritz_vecs):
         """
-        Orthogonalizes eigenvectors associated with degenerate eigenvalues.
+        Gets eigenvector that is orthogonalized against previously converged
+        degenerate eigenvectors.
 
+        :param cur_root:
+            The current root.
+        :param omega:
+            The current eigenvalue.
         :param converged_eigs:
             The list of converged eigenvalues.
         :param converged_vecs:
             The list of converged eigenvectors.
+        :param ritz_vecs:
+            The Ritz vectors from the Davidson solver.
+        :return:
+            The eigenvector.
         """
 
-        degenerate = [None] * self.nstates
+        # find the converged roots that are degenerate with the current root
+        degenerate_roots = []
+        for root in range(cur_root):
+            if abs(converged_eigs[root] - omega) < self.conv_thresh * 1e-4:
+                degenerate_roots.append(root)
 
-        # find degenerate states
-        for s1 in range(self.nstates):
-            if degenerate[s1] is not None:
-                continue
-            for s2 in range(s1 + 1, self.nstates):
-                if degenerate[s2] is not None:
-                    continue
-                if (abs(converged_eigs[s1] - converged_eigs[s2]) <
-                        self.conv_thresh * 1e-4):
-                    degenerate[s1] = s1
-                    degenerate[s2] = s1
+        if not degenerate_roots:
+            return ritz_vecs[:, cur_root].copy()
 
-        # orthogonalize degenerate states
-        for s1 in range(self.nstates):
-            if degenerate[s1] != s1:
-                continue
+        # get the converged degenerate eigenvectors
+        mask = [root in degenerate_roots for root in range(self.nstates)]
+        vecs = converged_vecs[:, mask]
 
-            mask = [degenerate[s2] == s1 for s2 in range(self.nstates)]
-            tvecs = converged_vecs[:, mask].copy()
+        # get the degenerate eigenvectors from the solver (including the
+        # current root)
+        degenerate_roots.append(cur_root)
+        mask = [root in degenerate_roots for root in range(self.nstates)]
+        degenerate_vecs = ritz_vecs[:, mask].copy()
 
-            # modified Gram-Schmidt
-            tvecs[:, 0] /= np.linalg.norm(tvecs[:, 0])
-            for i in range(1, tvecs.shape[1]):
-                for j in range(i):
-                    dot_ij = np.dot(tvecs[:, i], tvecs[:, j])
-                    dot_jj = np.dot(tvecs[:, j], tvecs[:, j])
-                    tvecs[:, i] -= (dot_ij / dot_jj) * tvecs[:, j]
-                tvecs[:, i] /= np.linalg.norm(tvecs[:, i])
+        # orthogonalize degenerate_vecs against vecs
+        degenerate_vecs_proj = np.matmul(vecs,
+                                         np.matmul(vecs.T, degenerate_vecs))
+        degenerate_vecs -= degenerate_vecs_proj
 
-            indices = [s2 for s2 in range(self.nstates) if degenerate[s2] == s1]
-            for i, ind in enumerate(indices):
-                converged_vecs[:, ind] = tvecs[:, i]
+        # find the eigenvector with the largest norm
+        norms = np.linalg.norm(degenerate_vecs, axis=0)
+        max_norm = np.max(norms)
+        max_index = list(norms).index(max_norm)
+
+        return degenerate_vecs[:, max_index] / max_norm
 
     def print_header(self):
         """
