@@ -53,7 +53,7 @@ class AdcTwoDriver:
         self.qq_type = 'QQ_DEN'
 
         # solver setup
-        self.conv_thresh = 1.0e-4
+        self.conv_thresh = 1.0e-5
         self.max_iter = 150
         self.cur_iter = 0
         self.is_converged = None
