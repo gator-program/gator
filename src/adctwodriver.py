@@ -292,11 +292,14 @@ class AdcTwoDriver:
                 solver.add_iteration_data(sigma_mat, trial_mat, cur_iter)
                 trial_mat = solver.compute(diag_mat)
                 ritz_vecs = solver.ritz_vectors
+                residual_eigs = solver.residual_eigs
             else:
                 trial_mat = None
                 ritz_vecs = None
+                residual_eigs = None
             trial_mat = self.comm.bcast(trial_mat, root=mpi_master())
             ritz_vecs = self.comm.bcast(ritz_vecs, root=mpi_master())
+            residual_eigs = self.comm.bcast(residual_eigs, root=mpi_master())
 
             # compute sigma and d_sigma vectors for current root
             t0 = tm.time()
@@ -350,7 +353,8 @@ class AdcTwoDriver:
                 root_converged[cur_root] = True
                 converged_eigs[cur_root] = omega
                 converged_vecs[:, cur_root] = self.find_eigenvector(
-                    cur_root, omega, converged_eigs, converged_vecs, ritz_vecs)
+                    cur_root, omega, converged_eigs, converged_vecs,
+                    residual_eigs, ritz_vecs)
                 s_components_2[cur_root] = s_comp_square
 
             # print iteration
@@ -366,9 +370,7 @@ class AdcTwoDriver:
                 self.ostream.print_blank()
                 cur_root += 1
                 if cur_root < self.nstates:
-                    if self.rank == mpi_master():
-                        omega = solver.residual_eigs[cur_root]
-                    omega = self.comm.bcast(omega, root=mpi_master())
+                    omega = residual_eigs[cur_root]
                 continue
 
             # check number of iterations
@@ -880,7 +882,7 @@ class AdcTwoDriver:
         return d_sigma_mat
 
     def find_eigenvector(self, cur_root, omega, converged_eigs, converged_vecs,
-                         ritz_vecs):
+                         residual_eigs, ritz_vecs):
         """
         Gets eigenvector that is orthogonalized against previously converged
         degenerate eigenvectors.
@@ -893,13 +895,15 @@ class AdcTwoDriver:
             The list of converged eigenvalues.
         :param converged_vecs:
             The list of converged eigenvectors.
+        :param residual_eigs:
+            The eigenvalues from the Davidson solver.
         :param ritz_vecs:
             The Ritz vectors from the Davidson solver.
         :return:
             The eigenvector.
         """
 
-        # find the converged roots that are degenerate with the current root
+        # find the degenerate eigenvectors that are already converged
         degenerate_roots = []
         for root in range(cur_root):
             if abs(converged_eigs[root] - omega) < self.conv_thresh * 1e-4:
@@ -908,27 +912,31 @@ class AdcTwoDriver:
         if not degenerate_roots:
             return ritz_vecs[:, cur_root].copy()
 
-        # get the converged degenerate eigenvectors
         mask = [root in degenerate_roots for root in range(self.nstates)]
-        vecs = converged_vecs[:, mask]
+        conv_vecs = converged_vecs[:, mask]
 
-        # get the degenerate eigenvectors from the solver (including the
+        # find the degenerate eigenvectors from the solver (including the
         # current root)
-        degenerate_roots.append(cur_root)
-        mask = [root in degenerate_roots for root in range(self.nstates)]
-        degenerate_vecs = ritz_vecs[:, mask].copy()
+        degenerate_roots = []
+        for root in range(cur_root + 1):
+            if abs(residual_eigs[root] -
+                   residual_eigs[cur_root]) < self.conv_thresh * 1e-4:
+                degenerate_roots.append(root)
 
-        # orthogonalize degenerate_vecs against vecs
-        degenerate_vecs_proj = np.matmul(vecs,
-                                         np.matmul(vecs.T, degenerate_vecs))
-        degenerate_vecs -= degenerate_vecs_proj
+        mask = [root in degenerate_roots for root in range(self.nstates)]
+        degen_vecs = ritz_vecs[:, mask].copy()
+
+        # orthogonalize degen_vecs against conv_vecs
+        degen_vecs_proj = np.matmul(conv_vecs,
+                                    np.matmul(conv_vecs.T, degen_vecs))
+        degen_vecs -= degen_vecs_proj
 
         # find the eigenvector with the largest norm
-        norms = np.linalg.norm(degenerate_vecs, axis=0)
+        norms = np.linalg.norm(degen_vecs, axis=0)
         max_norm = np.max(norms)
         max_index = list(norms).index(max_norm)
 
-        return degenerate_vecs[:, max_index] / max_norm
+        return degen_vecs[:, max_index] / max_norm
 
     def print_header(self):
         """
