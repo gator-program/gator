@@ -13,6 +13,12 @@ from .adcdriver import AdcDriver
 # Python functions
 from .mpiutils import mpi_sanity_check
 
+# Utility functions
+from .gatorutils import get_molecule
+from .gatorutils import get_molecular_basis
+from .gatorutils import run_scf_calculation
+from .gatorutils import run_adc_calculation
+
 # Environment variable
 import os
 if 'OMP_NUM_THREADS' not in os.environ:
