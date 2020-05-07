@@ -101,23 +101,23 @@ class AdcDriver:
             self.adc_method = adc_dict['method']
 
         if 'core_orbitals' in adc_dict:
-            orbs = [int(orb) for orb in adc_dict['core_orbitals'].split()]
+            orbs = [int(orb) - 1 for orb in adc_dict['core_orbitals'].split()]
             if len(orbs) == 1:
-                self.adc_core_orbitals = orbs[0]
+                self.adc_core_orbitals = orbs[0] + 1
             else:
                 self.adc_core_orbitals = orbs
 
         if 'frozen_core' in adc_dict:
-            orbs = [int(orb) for orb in adc_dict['frozen_core'].split()]
+            orbs = [int(orb) - 1 for orb in adc_dict['frozen_core'].split()]
             if len(orbs) == 1:
-                self.adc_frozen_core = orbs[0]
+                self.adc_frozen_core = orbs[0] + 1
             else:
                 self.adc_frozen_core = orbs
 
         if 'frozen_virtual' in adc_dict:
-            orbs = [int(orb) for orb in adc_dict['frozen_virtual'].split()]
+            orbs = [int(orb)-1 for orb in adc_dict['frozen_virtual'].split()]
             if len(orbs) == 1:
-                self.adc_frozen_virtual = orbs[0]
+                self.adc_frozen_virtual = orbs[0] + 1
             else:
                 self.adc_frozen_virtual = orbs
 
@@ -142,7 +142,7 @@ class AdcDriver:
 
             try:
                 from adcc import run_adc
-				from adcc import set_n_threads
+                #from adcc import set_n_threads
             except ImportError:
                 error_text = os.linesep + os.linesep
                 error_text += '*** Unable to import adcc. ' + os.linesep
@@ -151,8 +151,8 @@ class AdcDriver:
                 error_text += os.linesep
                 raise ImportError(error_text)
 
-			#set threads in adcc to the same number of threads used by veloxchem
-			#set_n_threads(omp_num_threads)
+            #set threads in adcc to the same number of threads used by veloxchem
+            #set_n_threads(omp_num_threads)
             adc_drv = run_adc(scf_drv,
                               method=self.adc_method,
                               core_orbitals=self.adc_core_orbitals,
@@ -208,7 +208,7 @@ class AdcDriver:
             else:
                 cur_str = "CVS-ADC, Core Orbital Space  :"
                 for orb in self.adc_core_orbitals:
-                    cur_str += " {:d}".format(orb)
+                    cur_str += " {:d}".format(orb+1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_frozen_core is not None:
@@ -218,7 +218,7 @@ class AdcDriver:
             else:
                 cur_str = "Frozen Core Orbital Space    :"
                 for orb in self.adc_frozen_core:
-                    cur_str += " {:d}".format(orb)
+                    cur_str += " {:d}".format(orb+1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_frozen_virtual is not None:
@@ -228,7 +228,7 @@ class AdcDriver:
             else:
                 cur_str = "Frozen Virtual Orbital Space :"
                 for orb in self.adc_frozen_virtual:
-                    cur_str += " {:d}".format(orb)
+                    cur_str += " {:d}".format(orb+1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
         cur_str = "Convergence threshold        : {:.1e}".format(self.adc_tol)
