@@ -171,6 +171,8 @@ class AdcDriver:
 
             self.print_convergence(adc_drv)
 
+            return adc_drv
+
     def print_header(self):
         """
         Prints header for the ADC driver.

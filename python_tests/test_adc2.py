@@ -33,7 +33,7 @@ class TestADC2(unittest.TestCase):
         if task.mpi_rank == mpi_master():
             e_mp2 = adc_results['mp2_energy']
             exc_ene = adc_results['eigenvalues']
-            s_comp2 = np.linalg.norm(adc_results['eigenvectors'], axis=0)**2
+            s_comp2 = adc_results['s_components_2']
             self.assertTrue(np.max(np.abs(e_mp2 - ref_e_mp2)) < 1.0e-10)
             self.assertTrue(np.max(np.abs(exc_ene - ref_exc_ene)) < 1.0e-7)
             self.assertTrue(np.max(np.abs(s_comp2 - ref_s_comp2)) < 1.0e-4)
