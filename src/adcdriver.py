@@ -1,34 +1,6 @@
 from veloxchem import mpi_master
 import os
 
-def parse_orbitals(orbs):
-    """
-    Parses list of orbitals in the input file to create an array for run_adc().
-    Input -> Output examples:             1 -> [0]
-                                     (1, 3) -> [0, 2]
-                                    '1 - 5' -> [0, 1, 2, 3, 4] 
-                               [1, 2, 3, 4] -> [0, 1, 2, 3] 
-                             '1-3, 4, 5-7'; -> [0, 1, 2, 3, 4, 5, 6]
-    (Note: the indexing of orbitals in the input file is set to start at 1, while the indexing used by run_adc starts at 0)
-    (Note: '1-3' means use orbitals 1, 2 and 3, so the output is [0, 1, 2])
-
-    :param orbs:
-        The string of input orbitals.
-    """
-    if isinstance(orbs, int):
-        return [orbs-1]
-    elif isinstance(orbs, (list, tuple)):
-        return [y-1 for y in orbs]
-    elif isinstance(orbs, str):
-        output = []
-        for x in orbs.replace(',', ' ').split():
-            if '-' in x:
-                z = [int(y) for y in x.split('-')]
-                output += list(range(z[0]-1,z[-1],1))
-            else:
-                output.append(int(x)-1)
-        return output
-
 
 class AdcDriver:
     """
@@ -129,20 +101,53 @@ class AdcDriver:
             self.adc_method = adc_dict['method']
 
         if 'core_orbitals' in adc_dict:
-            orbs = parse_orbitals(adc_dict['core_orbitals'])
-            self.adc_core_orbitals = orbs 
+            self.adc_core_orbitals = self.parse_orbital_input(
+                adc_dict['core_orbitals'])
 
         if 'frozen_core' in adc_dict:
-            orbs = parse_orbitals(adc_dict['frozen_core'])
-            self.adc_frozen_core = orbs
+            self.adc_frozen_core = self.parse_orbital_input(
+                adc_dict['frozen_core'])
 
         if 'frozen_virtual' in adc_dict:
-            orbs = parse_orbitals(adc_dict['frozen_virtual'])
-            self.adc_frozen_virtual = orbs
+            self.adc_frozen_virtual = self.parse_orbital_input(
+                adc_dict['frozen_virtual'])
 
         if 'print_states' in adc_dict:
             key = adc_dict['print_states'].lower()
             self.print_states = True if key in ['yes', 'y'] else False
+
+    @staticmethod
+    def parse_orbital_input(orbs):
+        """
+        Parses input orbital indices (1-based) and returns a list of orbital
+        indices (0-based).
+
+        Examples (input -> output):
+            1              -> [0]
+            (1, 3)         -> [0, 2]
+            '1 - 5'        -> [0, 1, 2, 3, 4]
+            [1, 2, 3, 4]   -> [0, 1, 2, 3]
+            '1-3, 4, 5-7'  -> [0, 1, 2, 3, 4, 5, 6]
+
+        :param orbs:
+            The input orbital indices (can be integer, list, tuple, or string).
+        :return:
+            A list of orbital indices.
+        """
+
+        if isinstance(orbs, int):
+            return [orbs - 1]
+        elif isinstance(orbs, (list, tuple)):
+            return [x - 1 for x in orbs]
+        elif isinstance(orbs, str):
+            output = []
+            for x in orbs.replace(',', ' ').split():
+                if '-' in x:
+                    z = [int(y) for y in x.split('-')]
+                    output += list(range(z[0] - 1, z[-1], 1))
+                else:
+                    output.append(int(x) - 1)
+            return output
 
     def compute(self, task, scf_drv):
         """
@@ -160,8 +165,7 @@ class AdcDriver:
             self.print_header()
 
             try:
-                from adcc import run_adc
-                from adcc import set_n_threads, get_n_threads
+                import adcc
             except ImportError:
                 error_text = os.linesep + os.linesep
                 error_text += '*** Unable to import adcc. ' + os.linesep
@@ -170,19 +174,19 @@ class AdcDriver:
                 error_text += os.linesep
                 raise ImportError(error_text)
 
-            #set threads in adcc to the number of threads defined by OMP_NUM_THREADS
-            set_n_threads(int(os.environ['OMP_NUM_THREADS']))
+            # set number of threads in adcc
+            adcc.set_n_threads(int(os.environ['OMP_NUM_THREADS']))
 
-            adc_drv = run_adc(scf_drv,
-                              method=self.adc_method,
-                              core_orbitals=self.adc_core_orbitals,
-                              n_states=self.adc_states,
-                              n_singlets=self.adc_singlets,
-                              n_triplets=self.adc_triplets,
-                              n_spin_flip=self.adc_spin_flip,
-                              frozen_core=self.adc_frozen_core,
-                              frozen_virtual=self.adc_frozen_virtual,
-                              conv_tol=self.adc_tol)
+            adc_drv = adcc.run_adc(scf_drv,
+                                   method=self.adc_method,
+                                   core_orbitals=self.adc_core_orbitals,
+                                   n_states=self.adc_states,
+                                   n_singlets=self.adc_singlets,
+                                   n_triplets=self.adc_triplets,
+                                   n_spin_flip=self.adc_spin_flip,
+                                   frozen_core=self.adc_frozen_core,
+                                   frozen_virtual=self.adc_frozen_virtual,
+                                   conv_tol=self.adc_tol)
 
             self.print_excited_states(adc_drv)
 
@@ -205,44 +209,47 @@ class AdcDriver:
         self.ostream.print_blank()
 
         str_width = 60
-        cur_str = "ADC method                   : {:s}".format(self.adc_method)
+        cur_str = 'ADC method                   : {:s}'.format(self.adc_method)
         self.ostream.print_header(cur_str.ljust(str_width))
         if self.adc_states is not None:
-            cur_str = "Number of States             : {:d}".format(
+            cur_str = 'Number of States             : {:d}'.format(
                 self.adc_states)
         elif self.adc_singlets is not None:
-            cur_str = "Number of Singlet States     : {:d}".format(
+            cur_str = 'Number of Singlet States     : {:d}'.format(
                 self.adc_singlets)
         elif self.adc_triplets is not None:
-            cur_str = "Number of Triplet States     : {:d}".format(
+            cur_str = 'Number of Triplet States     : {:d}'.format(
                 self.adc_triplets)
         else:
-            cur_str = "Number of States, Spin-Flip  : {:d}".format(
+            cur_str = 'Number of States, Spin-Flip  : {:d}'.format(
                 self.adc_spin_flip)
         self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_core_orbitals is not None:
-            cur_str = "CVS-ADC, Core Orbital Space  :"
+            cur_str = 'CVS-ADC, Core Orbital Space  :'
             for orb in self.adc_core_orbitals:
-                cur_str += " {:d}".format(orb+1)
-                # "+1" converts from run_adc indexing (starts at 0) back to input file indexing (starts at 1)
+                cur_str += ' {:d}'.format(orb + 1)
+                # '+1' converts from run_adc indexing (starts at 0) back to
+                # input indexing (starts at 1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_frozen_core is not None:
-            cur_str = "Frozen Core Orbital Space    :"
+            cur_str = 'Frozen Core Orbital Space    :'
             for orb in self.adc_frozen_core:
-                cur_str += " {:d}".format(orb+1)
-                # "+1" converts from run_adc indexing (starts at 0) back to input file indexing (starts at 1)
+                cur_str += ' {:d}'.format(orb + 1)
+                # '+1' converts from run_adc indexing (starts at 0) back to
+                # input indexing (starts at 1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_frozen_virtual is not None:
-            cur_str = "Frozen Virtual Orbital Space :"
+            cur_str = 'Frozen Virtual Orbital Space :'
             for orb in self.adc_frozen_virtual:
-                cur_str += " {:d}".format(orb+1)
-                # "+1" converts from run_adc indexing (starts at 0) back to input file indexing (starts at 1)
+                cur_str += ' {:d}'.format(orb + 1)
+                # '+1' converts from run_adc indexing (starts at 0) back to
+                # input indexing (starts at 1)
             self.ostream.print_header(cur_str.ljust(str_width))
 
-        cur_str = "Convergence threshold        : {:.1e}".format(self.adc_tol)
+        cur_str = 'Convergence threshold        : {:.1e}'.format(self.adc_tol)
         self.ostream.print_header(cur_str.ljust(str_width))
 
         self.ostream.print_blank()
@@ -254,7 +261,7 @@ class AdcDriver:
         """
 
         end = ' All went well!'
-        if not hasattr(adc_drv, "converged"):
+        if not hasattr(adc_drv, 'converged'):
             self.ostream.print_header('NOT CONVERGED')
             end = ' Did NOT converge.'
 
