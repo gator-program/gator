@@ -31,6 +31,9 @@ class AdcDriver:
           the MP and ADC calculation (array)
         - adc_frozen_virtual: virtual orbitals to be considered inactive during
           the MP and ADC calculation (array)
+        - print_states: print detailed information about each excited state
+        - adc_ecd: compute rotatory strengths for all excited states
+          (True/False)
     """
 
     def __init__(self, comm, ostream):
@@ -57,6 +60,7 @@ class AdcDriver:
         self.adc_frozen_core = None
         self.adc_frozen_virtual = None
         self.print_states = False
+        self.adc_ecd = False
 
     def update_settings(self, adc_dict, scf_drv=None):
         """
@@ -115,6 +119,10 @@ class AdcDriver:
         if 'print_states' in adc_dict:
             key = adc_dict['print_states'].lower()
             self.print_states = True if key in ['yes', 'y'] else False
+
+        if 'property' in adc_dict:
+            key = adc_dict['property'].lower()
+            self.adc_ecd = True if key == 'ecd' else False
 
     @staticmethod
     def parse_orbital_input(orbs):
@@ -282,7 +290,8 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        self.ostream.print_block(adc_drv.describe())
+        self.ostream.print_block(
+            adc_drv.describe(rotatory_strengths=self.adc_ecd))
 
     def print_detailed_states(self, adc_drv):
         """
