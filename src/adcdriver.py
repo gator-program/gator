@@ -290,8 +290,21 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        self.ostream.print_block(
-            adc_drv.describe(rotatory_strengths=self.adc_ecd))
+        try:
+            self.ostream.print_block(
+                adc_drv.describe(rotatory_strengths=self.adc_ecd))
+        except TypeError:
+            if self.adc_ecd is False:
+                self.ostream.print_block(adc_drv.describe())
+            else:
+                error_text = os.linesep + os.linesep
+                error_text += '*** Rotatory strengths not available.'
+                error_text += os.linesep
+                error_text += '*** Please update your adcc version. '
+                error_text += 'See https://github.com/adc-connect/adcc, '
+                error_text += 'magnetic_moments branch.'
+                error_text += os.linesep
+                raise TypeError(error_text)
 
     def print_detailed_states(self, adc_drv):
         """
