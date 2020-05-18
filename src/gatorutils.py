@@ -72,7 +72,7 @@ def get_molecular_basis(mol, basis_label):
     return basis
 
 
-def run_scf_calculation(mol, basis, **kwargs):
+def run_scf(mol, basis, **kwargs):
     """
     Runs SCF.
 
@@ -84,18 +84,41 @@ def run_scf_calculation(mol, basis, **kwargs):
         The scf driver.
     """
 
+    verbose = False
+    if 'verbose' in kwargs:
+        if isinstance(kwargs['verbose'], bool):
+            verbose = kwargs['verbose']
+        elif isinstance(kwargs['verbose'], str):
+            verbose = (kwargs['verbose'].lower() in ['yes', 'y'])
+
     comm = MPI.COMM_WORLD
-    ostream = OutputStream(sys.stdout)
+    if verbose:
+        ostream = OutputStream(sys.stdout)
+    else:
+        ostream = OutputStream()
 
     scf_drv = ScfRestrictedDriver(comm, ostream)
     scf_drv.update_settings(kwargs)
     scf_drv.compute(mol, basis)
     scf_drv.ostream.flush()
 
+    if not verbose:
+        valstr = 'SCF '
+        if scf_drv.is_converged:
+            valstr += 'converged in '
+        else:
+            valstr += 'NOT converged in '
+        valstr += '{:d} iterations.'.format(scf_drv.num_iter)
+        print(valstr, file=sys.stdout)
+        if scf_drv.is_converged:
+            valstr = 'Total Energy: {:.10f} au'.format(scf_drv.get_scf_energy())
+            print(valstr, file=sys.stdout)
+        sys.stdout.flush()
+
     return scf_drv
 
 
-def run_adc_calculation(mol, basis, scf_drv, **kwargs):
+def run_adc(mol, basis, scf_drv, **kwargs):
     """
     Runs ADC.
 
