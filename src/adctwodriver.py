@@ -359,7 +359,7 @@ class AdcTwoDriver:
 
             # print iteration
             self.print_iteration(cur_iter, subspace_size, residual_norm,
-                                 cur_root, converged_eigs, omega,
+                                 eig_diff, cur_root, converged_eigs, omega,
                                  root_converged[cur_root])
             cur_iter += 1
 
@@ -968,8 +968,8 @@ class AdcTwoDriver:
 
         self.ostream.flush()
 
-    def print_iteration(self, cur_iter, subspace_size, residual_norm, cur_root,
-                        converged_eigs, omega, omega_converged):
+    def print_iteration(self, cur_iter, subspace_size, residual_norm, eig_error,
+                        cur_root, converged_eigs, omega, omega_converged):
         """
         Prints ADC(2) iteration.
 
@@ -979,6 +979,8 @@ class AdcTwoDriver:
             The size of reduced space in the Davidson solver.
         :param residual_norm:
             The reisdual norm.
+        :param eig_error:
+            The error of eigenvalue.
         :param cur_root:
             The current root to be solved.
         :param converged_eigs:
@@ -1007,6 +1009,8 @@ class AdcTwoDriver:
         exec_str = 'State {:2d}:{:15.8f} au'.format(cur_root + 1, omega)
         if omega_converged:
             exec_str += '  converged'
+        else:
+            exec_str += '  Eigenvalue Error: {:.2e}'.format(abs(eig_error))
         self.ostream.print_header(exec_str.ljust(84))
 
         self.ostream.print_blank()
