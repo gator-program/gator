@@ -60,7 +60,7 @@ class AdcDriver:
         self.adc_frozen_core = None
         self.adc_frozen_virtual = None
         self.print_states = False
-        self.adc_ecd = False
+        self.adc_ecd = True
 
     def update_settings(self, adc_dict, scf_drv=None):
         """
@@ -120,9 +120,9 @@ class AdcDriver:
             key = adc_dict['print_states'].lower()
             self.print_states = True if key in ['yes', 'y'] else False
 
-        if 'property' in adc_dict:
-            key = adc_dict['property'].lower()
-            self.adc_ecd = True if key == 'ecd' else False
+        if 'ecd' in adc_dict:
+            key = adc_dict['ecd'].lower()
+            self.adc_ecd = False if key in ['no', 'n'] else True
 
     @staticmethod
     def parse_orbital_input(orbs):
@@ -301,8 +301,7 @@ class AdcDriver:
                 error_text += '*** Rotatory strengths not available.'
                 error_text += os.linesep
                 error_text += '*** Please update your adcc version. '
-                error_text += 'See https://github.com/adc-connect/adcc, '
-                error_text += 'magnetic_moments branch.'
+                error_text += 'See https://github.com/adc-connect/adcc. '
                 error_text += os.linesep
                 raise TypeError(error_text)
 
@@ -319,5 +318,6 @@ class AdcDriver:
         self.ostream.print_header(text)
         self.ostream.print_header('-' * (len(text) + 2))
         self.ostream.print_blank()
-        self.ostream.print_block(adc_drv.describe_amplitudes())
+        self.ostream.print_block(
+            adc_drv.describe_amplitudes(index_format="homolumo"))
         self.ostream.print_blank()
