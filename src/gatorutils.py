@@ -118,7 +118,7 @@ def run_scf(mol, basis, **kwargs):
     return scf_drv
 
 
-def run_adc(mol, basis, scf_drv, **kwargs):
+def run_adc(mol, basis, scf_drv, verbose=False, **kwargs):
     """
     Runs ADC.
 
@@ -140,4 +140,4 @@ def run_adc(mol, basis, scf_drv, **kwargs):
     adc_drv.ostream.flush()
 
     task = MockTask(mol, basis, comm, ostream)
-    return adc_drv.compute(task, scf_drv)
+    return adc_drv.compute(task, scf_drv, verbose)

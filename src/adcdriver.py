@@ -157,7 +157,7 @@ class AdcDriver:
                     output.append(int(x) - 1)
             return output
 
-    def compute(self, task, scf_drv):
+    def compute(self, task, scf_drv, verbose=True):
         """
         Performs ADC calculation.
 
@@ -170,7 +170,8 @@ class AdcDriver:
         scf_drv.task = task
 
         if self.rank == mpi_master():
-            self.print_header()
+            if verbose:
+                self.print_header()
 
             try:
                 import adcc
@@ -196,12 +197,14 @@ class AdcDriver:
                                    frozen_virtual=self.adc_frozen_virtual,
                                    conv_tol=self.adc_tol)
 
-            self.print_excited_states(adc_drv)
+            if verbose:
+                self.print_excited_states(adc_drv)
 
             if self.print_states:
                 self.print_detailed_states(adc_drv)
 
-            self.print_convergence(adc_drv)
+            if verbose:
+                self.print_convergence(adc_drv)
 
             return adc_drv
 
