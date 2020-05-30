@@ -204,8 +204,8 @@ class Mp2Driver:
             nocc = molecule.number_of_alpha_electrons()
 
             mo = mol_orbs.alpha_to_numpy()
-            mo_occ = mo[:, :nocc]
-            mo_vir = mo[:, nocc:]
+            mo_occ = mo[:, :nocc].copy()
+            mo_vir = mo[:, nocc:].copy()
 
             orb_ene = mol_orbs.ea_to_numpy()
             evir = orb_ene[nocc:]
