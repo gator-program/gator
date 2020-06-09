@@ -114,8 +114,8 @@ class MOIntegralsDriver:
             norb = mo.shape[1]
             nvir = norb - nocc
 
-            mo_occ = mo[:, :nocc]
-            mo_vir = mo[:, nocc:]
+            mo_occ = mo[:, :nocc].copy()
+            mo_vir = mo[:, nocc:].copy()
 
         # compute OO blocks: (OO|VV), (OV|OV), (OO|OV)
         #                     **       *  *     *  *

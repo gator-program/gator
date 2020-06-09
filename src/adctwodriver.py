@@ -156,7 +156,6 @@ class AdcTwoDriver:
         # prepare orbital energies
 
         if self.rank == mpi_master():
-            mo = scf_tensors['C']
             ea = scf_tensors['E']
         else:
             ea = None
@@ -183,20 +182,9 @@ class AdcTwoDriver:
 
         # prepare auxiliary matrices
 
-        if self.rank == mpi_master():
-            fa = scf_tensors['F'][0]
-            fmo = np.matmul(mo.T, np.matmul(fa, mo))
-            fab = fmo[nocc:, nocc:]
-            fij = fmo[:nocc, :nocc]
-        else:
-            fab = None
-            fij = None
-
         xA_ab, xB_ij = self.compute_xA_xB(epsilon, mo_indices, mo_integrals)
 
         auxiliary_matrices = {
-            'fab': fab,
-            'fij': fij,
             'xA_ab': xA_ab,
             'xB_ij': xB_ij,
         }
@@ -319,9 +307,9 @@ class AdcTwoDriver:
 
             # compute residual norm and eigenvalue increment for current root
             if self.rank == mpi_master():
-                tvec = ritz_vecs[:, cur_root]
-                svec = sigma_vecs_from_ritz[:, 0]
-                dsvec = d_sigma_vecs_from_ritz[:, 0]
+                tvec = ritz_vecs[:, cur_root].copy()
+                svec = sigma_vecs_from_ritz[:, 0].copy()
+                dsvec = d_sigma_vecs_from_ritz[:, 0].copy()
 
                 subspace_size = solver.reduced_space_size()
                 residual_norm = np.linalg.norm(svec - omega * tvec)
@@ -521,8 +509,7 @@ class AdcTwoDriver:
         :param epsilon:
             The dictionary containing orbital energy differences.
         :param auxiliary_matrices:
-            The dictionary containing auxiliary matrices (fab, fij, xA_ab,
-            xB_ij).
+            The dictionary containing auxiliary matrices (xA_ab, xB_ij).
         :param mo_indices:
             The pair indices for MO integrals.
         :param mo_integrals:
@@ -542,8 +529,6 @@ class AdcTwoDriver:
         nocc = eocc.shape[0]
         nvir = evir.shape[0]
 
-        fab = auxiliary_matrices['fab']
-        fij = auxiliary_matrices['fij']
         xA_ab = auxiliary_matrices['xA_ab']
         xB_ij = auxiliary_matrices['xB_ij']
 
@@ -552,7 +537,8 @@ class AdcTwoDriver:
         kc = np.zeros((trial_mat.shape[1], 2, nocc, nvir))
 
         for vecind in range(trial_mat.shape[1]):
-            rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+            # note: use copy() to ensure contiguous memory
+            rjb = trial_mat[:, vecind].reshape(nocc, nvir).copy()
             kc1 = kc[vecind, 0, :, :]
             kc2 = kc[vecind, 1, :, :]
 
@@ -571,13 +557,15 @@ class AdcTwoDriver:
         sigma_mat = np.zeros(trial_mat.shape)
 
         for vecind in range(trial_mat.shape[1]):
-            rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+            # note: use copy() to ensure contiguous memory
+            rjb = trial_mat[:, vecind].reshape(nocc, nvir).copy()
             sigma = np.zeros(rjb.shape)
 
             # 0th-order contribution
 
             if self.rank == mpi_master():
-                sigma += np.matmul(rjb, fab.T) - np.matmul(fij, rjb)
+                sigma += np.matmul(rjb, np.diag(evir)) - np.matmul(
+                    np.diag(eocc), rjb)
 
             # 1st-order contribution
 
@@ -759,7 +747,8 @@ class AdcTwoDriver:
         d_sigma_mat = np.zeros(trial_mat.shape)
 
         for vecind in range(trial_mat.shape[1]):
-            rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+            # note: use copy() to ensure contiguous memory
+            rjb = trial_mat[:, vecind].reshape(nocc, nvir).copy()
             d_sigma = np.zeros(rjb.shape)
 
             # single-double coupling term

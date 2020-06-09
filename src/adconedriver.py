@@ -148,19 +148,6 @@ class AdcOneDriver:
                 'Number of virtual orbitals: {:d}'.format(nvir))
             self.ostream.print_blank()
 
-            fa = scf_tensors['F'][0]
-            fmo = np.matmul(mo.T, np.matmul(fa, mo))
-            fab = fmo[nocc:, nocc:]
-            fij = fmo[:nocc, :nocc]
-        else:
-            fab = None
-            fij = None
-
-        auxiliary_matrices = {
-            'fab': fab,
-            'fij': fij,
-        }
-
         # set start time
 
         start_time = tm.time()
@@ -199,8 +186,7 @@ class AdcOneDriver:
 
         for iteration in range(self.max_iter):
 
-            sigma_mat = self.compute_sigma(trial_mat, epsilon,
-                                           auxiliary_matrices, mo_indices,
+            sigma_mat = self.compute_sigma(trial_mat, epsilon, mo_indices,
                                            mo_integrals)
 
             if self.rank == mpi_master():
@@ -233,8 +219,7 @@ class AdcOneDriver:
         else:
             return {}
 
-    def compute_sigma(self, trial_mat, epsilon, auxiliary_matrices, mo_indices,
-                      mo_integrals):
+    def compute_sigma(self, trial_mat, epsilon, mo_indices, mo_integrals):
 
         eocc = epsilon['o']
         evir = epsilon['v']
@@ -242,20 +227,19 @@ class AdcOneDriver:
         nocc = eocc.shape[0]
         nvir = evir.shape[0]
 
-        fab = auxiliary_matrices['fab']
-        fij = auxiliary_matrices['fij']
-
         sigma_mat = np.zeros(trial_mat.shape)
 
         for vecind in range(trial_mat.shape[1]):
-            rjb = trial_mat[:, vecind].reshape(nocc, nvir)
+            # note: use copy() to ensure contiguous memory
+            rjb = trial_mat[:, vecind].reshape(nocc, nvir).copy()
 
             sigma = np.zeros(rjb.shape)
 
             # 0th-order contribution
 
             if self.rank == mpi_master():
-                sigma += np.matmul(rjb, fab.T) - np.matmul(fij, rjb)
+                sigma += np.matmul(rjb, np.diag(evir)) - np.matmul(
+                    np.diag(eocc), rjb)
 
             # 1st-order contribution
 
