@@ -29,13 +29,26 @@ def main():
         task_type = input_dict['jobs']['task'].lower()
 
     if task_type in ['scf', 'adc', 'mp2', 'adc1', 'adc2']:
-        scf_drv = ScfRestrictedDriver(comm, ostream)
+        scf_dict = {}
         if 'scf' in input_dict:
-            if ('conv_thresh' not in input_dict['scf'] and
-                    task_type in ['adc', 'mp2', 'adc2']):
-                input_dict['scf']['conv_thresh'] = '1.0e-8'
-            scf_drv.update_settings(input_dict['scf'])
+            scf_dict = dict(input_dict['scf'])
+
+        if ('conv_thresh' not in scf_dict and
+                task_type in ['adc', 'mp2', 'adc2']):
+            scf_dict['conv_thresh'] = '1.0e-8'
+
+        method_dict = {}
+        if 'method_settings' in input_dict:
+            method_dict = dict(input_dict['method_settings'])
+
+        method_dict['pe_options'] = {}
+        if 'pe' in input_dict:
+            method_dict['pe_options'] = dict(input_dict['pe'])
+
+        scf_drv = ScfRestrictedDriver(comm, ostream)
+        scf_drv.update_settings(scf_dict, method_dict)
         scf_drv.compute(task.molecule, task.ao_basis, task.min_basis)
+
         if not scf_drv.is_converged:
             return
 
