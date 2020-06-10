@@ -72,6 +72,16 @@ def get_molecular_basis(mol, basis_label):
     return basis
 
 
+def get_bool(kwargs, key):
+
+    if key in kwargs:
+        if isinstance(kwargs[key], bool):
+            return kwargs[key]
+        elif isinstance(kwargs[key], str):
+            return (kwargs[key].lower() in ['yes', 'y'])
+    return False
+
+
 def run_scf(mol, basis, **kwargs):
     """
     Runs SCF.
@@ -84,12 +94,7 @@ def run_scf(mol, basis, **kwargs):
         The scf driver.
     """
 
-    verbose = False
-    if 'verbose' in kwargs:
-        if isinstance(kwargs['verbose'], bool):
-            verbose = kwargs['verbose']
-        elif isinstance(kwargs['verbose'], str):
-            verbose = (kwargs['verbose'].lower() in ['yes', 'y'])
+    verbose = get_bool(kwargs, 'verbose')
 
     comm = MPI.COMM_WORLD
     if verbose:
@@ -118,7 +123,7 @@ def run_scf(mol, basis, **kwargs):
     return scf_drv
 
 
-def run_adc(mol, basis, scf_drv, verbose=False, **kwargs):
+def run_adc(mol, basis, scf_drv, **kwargs):
     """
     Runs ADC.
 
@@ -131,6 +136,8 @@ def run_adc(mol, basis, scf_drv, verbose=False, **kwargs):
     :return:
         The result of adcc.run_adc.
     """
+
+    verbose = get_bool(kwargs, 'verbose')
 
     comm = MPI.COMM_WORLD
     ostream = OutputStream(sys.stdout)
