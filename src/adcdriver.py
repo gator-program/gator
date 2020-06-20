@@ -288,6 +288,9 @@ class AdcDriver:
             The ADC driver.
         """
 
+        from scipy import constants
+        eV = constants.value("Hartree energy in eV")
+
         self.ostream.print_blank()
         text = 'ADC Summary of Results'
         self.ostream.print_header(text)
@@ -307,6 +310,35 @@ class AdcDriver:
                 error_text += 'See https://github.com/adc-connect/adcc. '
                 error_text += os.linesep
                 raise TypeError(error_text)
+
+        if hasattr(adc_drv, 'pe_ptss_correction'):
+            text = 'Polarizable Embedding Perturbative Corrections'
+            self.ostream.print_blank()
+            self.ostream.print_header(text)
+            self.ostream.print_header('-' * (len(text) + 2))
+            self.ostream.print_blank()
+            valstr = '{} | {} | {} | {} | {}'.format('Index',
+                                                     'Excitation Energy',
+                                                     'Uncorrected Energy',
+                                                     'ptSS Correction',
+                                                     'ptLR Correction')
+            self.ostream.print_header(valstr)
+            valstr = ' {}   {}   {}   {}   {}'.format('  #  ',
+                                                      '      (eV)      ',
+                                                      '      (ev)      ',
+                                                      '     (eV)     ',
+                                                      '      (eV)      ')
+            self.ostream.print_header(valstr)
+            self.ostream.print_header('-' * (len(text) + 32))
+            for i in range(len(adc_drv.excitation_energy)):
+                valstr = ' {:3d} {:18.7f} {:18.7f} {:18.7f} {:17.7f}'.format(
+                    i, eV * adc_drv.excitation_energy[i],
+                    eV * adc_drv.excitation_energy_uncorrected[i],
+                    eV * adc_drv.pe_ptss_correction[i],
+                    eV * adc_drv.pe_ptlr_correction[i])
+                self.ostream.print_header(valstr)
+
+            self.ostream.print_blank()
 
     def print_detailed_states(self, adc_drv):
         """
