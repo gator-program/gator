@@ -1,4 +1,5 @@
 from veloxchem import mpi_master
+from scipy import constants
 import os
 import numpy as np
 import re
@@ -430,8 +431,7 @@ class AdcDriver:
             The ADC driver.
         """
 
-        from scipy import constants
-        eV = constants.value("Hartree energy in eV")
+        eV = constants.value('Hartree energy in eV')
 
         self.ostream.print_blank()
         text = 'ADC Summary of Results'
