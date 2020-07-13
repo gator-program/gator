@@ -1,5 +1,7 @@
 from veloxchem import mpi_master
 import os
+import numpy as np
+import re
 
 
 class AdcDriver:
@@ -61,6 +63,9 @@ class AdcDriver:
         self.adc_frozen_virtual = None
         self.print_states = False
         self.adc_ecd = True
+        self.cpp = False
+        self.frequencies = None
+        self.damping = None
 
     def update_settings(self, adc_dict, scf_drv=None):
         """
@@ -102,7 +107,21 @@ class AdcDriver:
             self.adc_triplets = None
 
         if 'method' in adc_dict:
-            self.adc_method = adc_dict['method']
+            if 'cpp' in adc_dict['method']:
+                self.cpp = True
+                self.adc_method = adc_dict['method'].split()[0]
+            else:
+                self.adc_method = adc_dict['method']
+
+        if 'frequencies' in adc_dict:
+            self.frequencies = adc_dict['frequencies']
+            self.adc_triplets = None
+            self.adc_states = None
+            self.adc_singlets = None
+            self.adc_spin_flip = None
+
+        if 'damping' in adc_dict:
+            self.damping = float(adc_dict['damping'])
 
         if 'core_orbitals' in adc_dict:
             self.adc_core_orbitals = self.parse_orbital_input(
@@ -157,6 +176,38 @@ class AdcDriver:
                     output.append(int(x) - 1)
             return output
 
+    @staticmethod
+    def parse_frequencies(input_frequencies):
+        """
+        Parses input frequencies for the antwort response library.
+
+        Input example: "0.4-0.5 (0.002), 0.7-0.9 (0.001)"
+
+        :param input_frequencies:
+            The string of input frequencies.
+        :return:
+            an ndarray of frequencies required by antwort
+        """
+        if isinstance(input_frequencies, np.ndarray):
+            return input_frequencies
+
+        frequencies = []
+        for w in input_frequencies.split(','):
+            if '-' in w:
+                m = re.search(r'^(.*)-(.*)\((.*)\)$', w)
+                if m is None:
+                    m = re.search(r'^(.*)-(.*)-(.*)$', w)
+
+                frequencies += list(
+                    np.arange(
+                        float(m.group(1)),
+                        float(m.group(2)),
+                        float(m.group(3)),
+                    ))
+            elif w:
+                frequencies.append(float(w))
+        return np.array(frequencies)
+
     def compute(self, task, scf_drv, verbose=True):
         """
         Performs ADC calculation.
@@ -183,30 +234,83 @@ class AdcDriver:
                 error_text += os.linesep
                 raise ImportError(error_text)
 
-            # set number of threads in adcc
-            adcc.set_n_threads(int(os.environ['OMP_NUM_THREADS']))
+            if self.cpp:
+                if self.frequencies is None:
+                    error_text = os.linesep + os.linesep
+                    error_text += '*** Please define a frequency range (a.u.)'
+                    error_text += ' for the cpp solver.'
+                    error_text += os.linesep + '*** Example:' + os.linesep
+                    error_text += 'frequencies: 0.40-0.60 (0.05)'
+                    error_text += os.linesep
+                    raise ValueError(error_text)
+                if self.damping is None:
+                    error_text = os.linesep + os.linesep
+                    error_text += '*** Please define a damping parameter '
+                    error_text += '(a.u.) for the cpp solver.'
+                    error_text += os.linesep + 'Example:' + os.linesep
+                    error_text += 'damping: 0.001'
+                    error_text += os.linesep
+                    raise ValueError(error_text)
+                try:
+                    import antwort
+                except ImportError:
+                    error_text = os.linesep + os.linesep
+                    error_text += '*** Unable to import antwort. ' + os.linesep
+                    error_text += '*** Please download and install from'
+                    error_text += 'https://git.gator-program.org/gator/antwort'
+                    error_text += os.linesep
+                    raise ImportError(error_text)
 
-            adc_drv = adcc.run_adc(scf_drv,
-                                   method=self.adc_method,
-                                   core_orbitals=self.adc_core_orbitals,
-                                   n_states=self.adc_states,
-                                   n_singlets=self.adc_singlets,
-                                   n_triplets=self.adc_triplets,
-                                   n_spin_flip=self.adc_spin_flip,
-                                   frozen_core=self.adc_frozen_core,
-                                   frozen_virtual=self.adc_frozen_virtual,
-                                   conv_tol=self.adc_tol)
+                adc_drv = adcc.ReferenceState(
+                    scf_drv,
+                    core_orbitals=self.adc_core_orbitals,
+                    frozen_core=self.adc_frozen_core,
+                    frozen_virtual=self.adc_frozen_virtual)
 
-            if verbose:
-                self.print_excited_states(adc_drv)
+                frequencies = self.parse_frequencies(self.frequencies)
+                all_pol = [
+                    antwort.complex_polarizability(self.adc_method,
+                                                   adc_drv,
+                                                   omega=w,
+                                                   gamma=self.damping,
+                                                   conv_tol=self.adc_tol)
+                    for w in frequencies
+                ]
+                cross_sections = (
+                    antwort.polarizability.one_photon_absorption_cross_section(
+                        np.array(all_pol), frequencies))
 
-            if self.print_states:
-                self.print_detailed_states(adc_drv)
+                if verbose:
+                    self.print_cpp_results(frequencies, cross_sections)
 
-            if verbose:
-                self.print_convergence(adc_drv)
+                return frequencies, cross_sections
 
-            return adc_drv
+            else:
+
+                # set number of threads in adcc
+                adcc.set_n_threads(int(os.environ['OMP_NUM_THREADS']))
+
+                adc_drv = adcc.run_adc(scf_drv,
+                                       method=self.adc_method,
+                                       core_orbitals=self.adc_core_orbitals,
+                                       n_states=self.adc_states,
+                                       n_singlets=self.adc_singlets,
+                                       n_triplets=self.adc_triplets,
+                                       n_spin_flip=self.adc_spin_flip,
+                                       frozen_core=self.adc_frozen_core,
+                                       frozen_virtual=self.adc_frozen_virtual,
+                                       conv_tol=self.adc_tol)
+
+                if verbose:
+                    self.print_excited_states(adc_drv)
+
+                if self.print_states:
+                    self.print_detailed_states(adc_drv)
+
+                if verbose:
+                    self.print_convergence(adc_drv)
+
+                return adc_drv
 
     def print_header(self):
         """
@@ -221,20 +325,37 @@ class AdcDriver:
 
         str_width = 60
         cur_str = 'ADC method                   : {:s}'.format(self.adc_method)
+        if self.cpp:
+            cur_str += ' (cpp)'
         self.ostream.print_header(cur_str.ljust(str_width))
         if self.adc_states is not None:
             cur_str = 'Number of States             : {:d}'.format(
                 self.adc_states)
+            self.ostream.print_header(cur_str.ljust(str_width))
         elif self.adc_singlets is not None:
             cur_str = 'Number of Singlet States     : {:d}'.format(
                 self.adc_singlets)
+            self.ostream.print_header(cur_str.ljust(str_width))
         elif self.adc_triplets is not None:
             cur_str = 'Number of Triplet States     : {:d}'.format(
                 self.adc_triplets)
-        else:
+            self.ostream.print_header(cur_str.ljust(str_width))
+        elif self.adc_spin_flip is not None:
             cur_str = 'Number of States, Spin-Flip  : {:d}'.format(
                 self.adc_spin_flip)
-        self.ostream.print_header(cur_str.ljust(str_width))
+            self.ostream.print_header(cur_str.ljust(str_width))
+        else:
+            freqs = [f.strip() for f in self.frequencies.split(',')]
+            cur_str = 'Frequencies (a.u.)           : {:s}'.format(freqs[0])
+            self.ostream.print_header(cur_str.ljust(str_width))
+            for f in freqs[1:]:
+                cur_str = '                               {:s}'.format(f)
+                self.ostream.print_header(cur_str.ljust(str_width))
+
+        if self.damping is not None:
+            cur_str = 'Damping                      : {:f} a.u.'.format(
+                self.damping)
+            self.ostream.print_header(cur_str.ljust(str_width))
 
         if self.adc_core_orbitals is not None:
             cur_str = 'CVS-ADC, Core Orbital Space  :'
@@ -279,6 +400,27 @@ class AdcDriver:
         self.ostream.print_header('End of ADC calculation.' + end)
         self.ostream.print_blank()
         self.ostream.flush()
+
+    def print_cpp_results(self, frequencies, cross_sections):
+        from scipy import constants
+        eV = constants.value("Hartree energy in eV")
+
+        text = 'ADC, Complex Polarization Propagator'
+        self.ostream.print_blank()
+        self.ostream.print_header(text)
+        self.ostream.print_header('-' * (len(text) + 2))
+        self.ostream.print_blank()
+        valstr = '{} | {} | {} '.format('  Frequency (a.u)  ',
+                                        '  Frequency (eV)',
+                                        '  Cross Section (a.u.)  ')
+        self.ostream.print_header(valstr)
+        self.ostream.print_header('-' * (len(text) + 25))
+        for i in range(len(frequencies)):
+            valstr = ' {:10.7f} {:18.7f} {:18.7f} '.format(
+                frequencies[i], eV * frequencies[i], cross_sections[i])
+            self.ostream.print_header(valstr)
+
+        self.ostream.print_blank()
 
     def print_excited_states(self, adc_drv):
         """
