@@ -1,8 +1,10 @@
 from mpi4py import MPI
 import numpy as np
 import time as tm
+import math
 
 from veloxchem import BlockDavidsonSolver
+from veloxchem import ElectricDipoleIntegralsDriver
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
 from veloxchem import get_qq_type
@@ -130,14 +132,19 @@ class AdcOneDriver:
         nocc = molecule.number_of_alpha_electrons()
         nvir = mo.shape[1] - nocc
 
+        mo_occ = mo[:, :nocc].copy()
+        mo_vir = mo[:, nocc:].copy()
+
         eocc = ea[:nocc]
         evir = ea[nocc:]
         e_ov = -eocc.reshape(-1, 1) + evir
+        e_vv = evir.reshape(-1, 1) + evir
 
         epsilon = {
             'o': eocc,
             'v': evir,
             'ov': e_ov,
+            'vv': e_vv,
         }
 
         if self.rank == mpi_master():
@@ -211,15 +218,42 @@ class AdcOneDriver:
         if self.rank == mpi_master():
             reigs, rnorms = self.solver.get_eigenvalues()
             rvecs = self.solver.ritz_vectors.copy()
-            self.print_convergence(start_time, reigs)
+        else:
+            reigs = None
+            rvecs = None
+        rvecs = self.comm.bcast(rvecs, root=mpi_master())
+
+        fvecs = self.compute_spectral_amplitudes(rvecs, epsilon, mo_indices,
+                                                 mo_integrals)
+
+        osc = self.compute_oscillator_strengths(molecule, basis, mo_occ, mo_vir,
+                                                reigs, fvecs)
+
+        if self.rank == mpi_master():
+            self.print_convergence(start_time, reigs, osc)
             return {
                 'eigenvalues': reigs,
                 'eigenvectors': rvecs,
+                'oscillator_strengths': osc,
             }
         else:
             return {}
 
     def compute_sigma(self, trial_mat, epsilon, mo_indices, mo_integrals):
+        """
+        Computes sigma vectors for ADC(1).
+
+        :param trial_mat:
+            The trial vectors.
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The sigma vectors.
+        """
 
         eocc = epsilon['o']
         evir = epsilon['v']
@@ -256,8 +290,111 @@ class AdcOneDriver:
 
         return sigma_mat
 
+    def compute_spectral_amplitudes(self, rvecs, epsilon, mo_indices,
+                                    mo_integrals):
+        """
+        Computes spectral amplitudes for ADC(1).
+
+        :param rvecs:
+            The one-particle excitation vectors.
+        :param epsilon:
+            The dictionary containing orbital energy differences.
+        :param mo_indices:
+            The pair indices for MO integrals.
+        :param mo_integrals:
+            The MO integrals.
+        :return:
+            The spectral amplitudes.
+        """
+
+        # F_ia
+        # 0th-order: R_ia
+        # 1st-order: { [ +1(aj|bi) -2(ai|bj) ] / e_abji } R_jb
+
+        eocc = epsilon['o']
+        evir = epsilon['v']
+        e_vv = epsilon['vv']
+
+        nocc = eocc.shape[0]
+        nvir = evir.shape[0]
+
+        fvecs = rvecs.copy()
+
+        for vecind in range(rvecs.shape[1]):
+            # note: use copy() to ensure contiguous memory
+            rjb = rvecs[:, vecind].reshape(nocc, nvir).copy()
+
+            fia = np.zeros(rjb.shape)
+
+            for ind, (i, j) in enumerate(mo_indices['oo']):
+                # { [ -2(ia|jb) +1(ib|ja) ] / e_abji } R_jb
+                ab = mo_integrals['chem_ovov_K'][ind]
+                de = e_vv - eocc[i] - eocc[j]
+                fia[i, :] += np.dot((-2.0 * ab + ab.T) / de, rjb[j, :])
+
+            fvecs[:, vecind] += fia.reshape(nocc * nvir)[:]
+
+        return fvecs
+
+    def compute_oscillator_strengths(self, molecule, basis, mo_occ, mo_vir,
+                                     reigs, fvecs):
+        """
+        Computes oscillator strengths for ADC(1).
+
+        :param molecule:
+            The molecule.
+        :param basis:
+            The AO basis set.
+        :param mo_occ:
+            The MO coefficients of occupied orbitals.
+        :param mo_vir:
+            The MO coefficients of virtual orbitals.
+        :param reigs:
+            The excitation energies.
+        :param fvecs:
+            The spectrial amplitudes.
+        :return:
+            The oscillator strengths.
+        """
+
+        dipole_drv = ElectricDipoleIntegralsDriver(self.comm)
+        dipole_mats = dipole_drv.compute(molecule, basis)
+
+        if self.rank == mpi_master():
+            sqrt_2 = math.sqrt(2.0)
+
+            nocc = mo_occ.shape[1]
+            nvir = mo_vir.shape[1]
+
+            dipole_ints = [
+                dipole_mats.x_to_numpy(),
+                dipole_mats.y_to_numpy(),
+                dipole_mats.z_to_numpy(),
+            ]
+
+            oscillator_strengths = []
+
+            for s in range(self.nstates):
+                exc_ene = reigs[s]
+                exc_vec = sqrt_2 * fvecs[:, s].reshape(nocc, nvir).copy()
+
+                trans_dens = np.linalg.multi_dot([mo_occ, exc_vec, mo_vir.T])
+
+                trans_dipole = np.array(
+                    [np.vdot(trans_dens, dipole_ints[d]) for d in range(3)])
+
+                dipole_strength = np.sum(trans_dipole**2)
+                oscillator_strengths.append(2.0 / 3.0 * dipole_strength *
+                                            exc_ene)
+
+            return oscillator_strengths
+        else:
+            return None
+
     def print_header(self):
-        """Prints ADC(1) driver setup header to output stream"""
+        """
+        Prints ADC(1) driver setup header to output stream.
+        """
 
         self.ostream.print_blank()
         self.ostream.print_header("ADC(1) Driver Setup")
@@ -333,7 +470,7 @@ class AdcOneDriver:
         self.ostream.print_blank()
         self.ostream.flush()
 
-    def print_convergence(self, start_time, reigs):
+    def print_convergence(self, start_time, reigs, osc):
         """
         Prints convergence and excited state information.
 
@@ -341,6 +478,8 @@ class AdcOneDriver:
             The start time of calculation.
         :param reigs:
             The excitation energies.
+        :param osc:
+            The oscillator strengths.
         """
 
         valstr = "*** {:d} excited states ".format(self.nstates)
@@ -361,6 +500,7 @@ class AdcOneDriver:
                 valstr = 'Excited State {:>5s}: '.format('S' + str(s + 1))
                 valstr += '{:15.8f} a.u. '.format(e)
                 valstr += '{:12.5f} eV'.format(e * hartree_in_ev())
+                valstr += '    Osc.Str. {:.5f}'.format(osc[s])
                 self.ostream.print_header(valstr.ljust(92))
             self.ostream.print_blank()
             self.ostream.print_blank()
