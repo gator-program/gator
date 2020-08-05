@@ -318,7 +318,7 @@ class AdcOneDriver:
         nocc = eocc.shape[0]
         nvir = evir.shape[0]
 
-        fvecs = rvecs.copy()
+        fvecs = np.zeros(rvecs.shape)
 
         for vecind in range(rvecs.shape[1]):
             # note: use copy() to ensure contiguous memory
@@ -333,6 +333,11 @@ class AdcOneDriver:
                 fia[i, :] += np.dot((-2.0 * ab + ab.T) / de, rjb[j, :])
 
             fvecs[:, vecind] += fia.reshape(nocc * nvir)[:]
+
+        fvecs = self.comm.reduce(fvecs, op=MPI.SUM, root=mpi_master())
+
+        if self.rank == mpi_master():
+            fvecs += rvecs
 
         return fvecs
 
