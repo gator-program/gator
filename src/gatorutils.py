@@ -102,8 +102,15 @@ def run_scf(mol, basis, **kwargs):
     else:
         ostream = OutputStream()
 
+    if 'pe' in kwargs:
+        method_dict = {'pe_options': dict(kwargs['pe'])}
+    elif 'potfile' in kwargs:
+        method_dict = {'pe_options': {'potfile': kwargs['potfile']}}
+    else:
+        method_dict = None
+
     scf_drv = ScfRestrictedDriver(comm, ostream)
-    scf_drv.update_settings(kwargs)
+    scf_drv.update_settings(kwargs, method_dict)
     scf_drv.compute(mol, basis)
     scf_drv.ostream.flush()
 
