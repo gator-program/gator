@@ -30,3 +30,5 @@ if 'OMP_NUM_THREADS' not in os.environ:
           file=sys.stdout)
     print('* Warning * Setting OMP_NUM_THREADS to {:d}.'.format(ncores),
           file=sys.stdout)
+
+__version__ = "0.1"

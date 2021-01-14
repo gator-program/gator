@@ -1,0 +1,36 @@
+package:
+    name: gator
+    version: @GATOR_VERSION@
+
+source:
+    path: ../
+
+build:
+    noarch: python
+    number: 0
+    script: "{{ PYTHON }} -m pip install . --no-deps -vv"
+
+requirements:
+    host:
+        - python >=3.6
+        - pip
+    run:
+        - python >=3.6
+        - numpy >=1.14
+        - adcc >=0.15.6
+        - mpi4py >=3.0
+        - respondo  # TODO: pin version!
+        - veloxchem  # TODO: pin version!
+
+test:
+    requires:
+        - pytest
+    imports:
+        - adcc
+        - veloxchem
+        - respondo
+        - gator
+    # commands:
+        # Inspect linkage
+        # - conda inspect linkages --show-files --groupby=dependency gator
+        # TODO: actually run tests

@@ -1,0 +1,13 @@
+name: test-env
+channels:
+  - defaults
+  - gator/label/dev
+  - conda-forge
+dependencies:
+  - adcc
+  - numpy
+  - pytest
+  - veloxchem
+  - respondo
+  - mpi4py
+  - psutil
