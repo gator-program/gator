@@ -10,3 +10,5 @@ htmlcov
 .coverage
 *.egg-info
 *.dist
+tmp
+dist

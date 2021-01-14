@@ -179,14 +179,14 @@ class AdcDriver:
     @staticmethod
     def parse_frequencies(input_frequencies):
         """
-        Parses input frequencies for the antwort response library.
+        Parses input frequencies for the respondo response library.
 
         Input example: "0.4-0.5 (0.002), 0.7-0.9 (0.001)"
 
         :param input_frequencies:
             The string of input frequencies.
         :return:
-            an ndarray of frequencies required by antwort
+            an ndarray of frequencies required by respondo
         """
         if isinstance(input_frequencies, np.ndarray):
             return input_frequencies
@@ -252,12 +252,12 @@ class AdcDriver:
                     error_text += os.linesep
                     raise ValueError(error_text)
                 try:
-                    import antwort
+                    import respondo
                 except ImportError:
                     error_text = os.linesep + os.linesep
-                    error_text += '*** Unable to import antwort. ' + os.linesep
+                    error_text += '*** Unable to import respondo. ' + os.linesep
                     error_text += '*** Please download and install from'
-                    error_text += 'https://git.gator-program.org/gator/antwort'
+                    error_text += 'https://git.gator-program.org/gator/respondo'
                     error_text += os.linesep
                     raise ImportError(error_text)
 
@@ -269,7 +269,7 @@ class AdcDriver:
 
                 frequencies = self.parse_frequencies(self.frequencies)
                 all_pol = [
-                    antwort.complex_polarizability(self.adc_method,
+                    respondo.complex_polarizability(self.adc_method,
                                                    adc_drv,
                                                    omega=w,
                                                    gamma=self.damping,
@@ -277,7 +277,7 @@ class AdcDriver:
                     for w in frequencies
                 ]
                 cross_sections = (
-                    antwort.polarizability.one_photon_absorption_cross_section(
+                    respondo.polarizability.one_photon_absorption_cross_section(
                         np.array(all_pol), frequencies))
 
                 if verbose:
