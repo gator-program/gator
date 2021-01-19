@@ -230,7 +230,7 @@ class AdcTwoDriver:
 
         # set up trial excitation vectors
 
-        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
+        diag_mat = e_ov.copy().reshape(-1)
 
         if self.rank == mpi_master():
             initial_trials = adc_one_results['eigenvectors']
