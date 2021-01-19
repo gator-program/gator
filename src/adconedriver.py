@@ -161,7 +161,7 @@ class AdcOneDriver:
 
         # set up trial excitation vectors
 
-        diag_mat = e_ov.copy().reshape(nocc * nvir, 1)
+        diag_mat = e_ov.copy().reshape(-1)
 
         exci_list = [(evir[a] - eocc[nocc - 1 - i], nocc - 1 - i, a)
                      for i in range(min(self.nstates, nocc))
