@@ -1,3 +1,4 @@
+from gator import __version__
 from veloxchem import InputParser
 from veloxchem import OutputStream
 from veloxchem import Molecule
@@ -55,9 +56,9 @@ class GatorTask:
 
         self.ostream.print_separator()
         self.ostream.print_title('')
-        self.ostream.print_title('GATOR 0.0')
+        self.ostream.print_title(f'GATOR {__version__}')
         self.ostream.print_title('')
-        self.ostream.print_title('Copyright (C) 2019-2020 GATOR developers.')
+        self.ostream.print_title('Copyright (C) 2019-2021 GATOR developers.')
         self.ostream.print_title('All rights reserved.')
         self.ostream.print_separator()
         exec_str = 'GATOR execution started'
