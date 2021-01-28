@@ -29,4 +29,4 @@ set -eu
 
 # Running build and deployment
 # TODO: change gator label to main once in production
-conda build conda -c gator/label/dev -c defaults -c conda-forge --user gator --token $ANACONDA_TOKEN --label $LABEL
+conda build conda -c gator -c defaults -c conda-forge --user gator --token $ANACONDA_TOKEN --label $LABEL
