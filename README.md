@@ -1,6 +1,7 @@
 # <img src="media/logo.png" height=120>
 
 ![CI](https://github.com/gator-program/gator/workflows/CI/badge.svg)
+[![Anaconda-Server Badge](https://anaconda.org/gator/gator/badges/version.svg)](https://anaconda.org/gator/gator)
 
 
 Gator is a program for computational spectroscopy and calculations
