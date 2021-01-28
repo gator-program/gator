@@ -1,5 +1,8 @@
 # <img src="media/logo.png" height=120>
 
+![CI](https://github.com/gator-program/gator/workflows/CI/badge.svg)
+
+
 Gator is a program for computational spectroscopy and calculations
 of molecular properties, currently using the algebraic diagrammatic construction (ADC) scheme for the polarization propagator.
 
