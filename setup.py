@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name='gator',
-    version='0.1.0',
+    version='0.2.0',
     packages=['gator'],
     package_dir={'gator': 'src'},
     entry_points={'console_scripts': ['gator=gator.main:main']},
