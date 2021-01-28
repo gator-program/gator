@@ -17,9 +17,9 @@ requirements:
     run:
         - python >=3.6
         - numpy >=1.14
-        - adcc >=0.15.6
+        - adcc >=0.15.7
         - mpi4py >=3.0
-        - respondo  # TODO: pin version!
+        - respondo >=0.0.3
         - veloxchem  # TODO: pin version!
 
 test:
@@ -34,3 +34,15 @@ test:
         # Inspect linkage
         # - conda inspect linkages --show-files --groupby=dependency gator
         # TODO: actually run tests
+
+about:
+    home: https://github.com/gator-program/gator
+    dev_url: https://github.com/gator-program/gator
+    license: GPL-3.0
+    license_family: GPL
+    license_file: {{ SRC_DIR }}/LICENSE
+    summary: "Gator - Python-driven program for spectroscopy simulations using correlated wave functions"
+    description: |
+      Gator is a Python-driven program for computational
+      spectroscopy and molecular properties with correlated
+      wave functions, currently using ADC.
