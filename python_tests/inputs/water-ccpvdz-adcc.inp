@@ -1,0 +1,22 @@
+@jobs
+task: adc
+@end
+
+@adc
+method: adc2 
+singlets: 3
+@end
+
+@method settings
+basis: cc-pvdz
+@end
+
+@molecule
+charge: 0
+multiplicity: 1
+units: au
+xyz:  
+O 0 0 0
+H 0 0 1.795239827225189
+H 1.693194615993441 0 -0.599043184453037
+@end 

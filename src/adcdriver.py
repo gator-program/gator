@@ -257,8 +257,8 @@ class AdcDriver:
                 except ImportError:
                     error_text = os.linesep + os.linesep
                     error_text += '*** Unable to import respondo. ' + os.linesep
-                    error_text += '*** Please download and install from'
-                    error_text += 'https://git.gator-program.org/gator/respondo'
+                    error_text += '*** Please install from conda or '
+                    error_text += 'https://github.com/gator-program/respondo'
                     error_text += os.linesep
                     raise ImportError(error_text)
 
@@ -270,11 +270,11 @@ class AdcDriver:
 
                 frequencies = self.parse_frequencies(self.frequencies)
                 all_pol = [
-                    respondo.complex_polarizability(self.adc_method,
-                                                   adc_drv,
-                                                   omega=w,
-                                                   gamma=self.damping,
-                                                   conv_tol=self.adc_tol)
+                    respondo.complex_polarizability(adc_drv,
+                                                    method=self.adc_method,
+                                                    omega=w,
+                                                    gamma=self.damping,
+                                                    conv_tol=self.adc_tol)
                     for w in frequencies
                 ]
                 cross_sections = (
