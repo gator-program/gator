@@ -120,8 +120,8 @@ class AdcOneDriver:
         """
 
         if self.rank == mpi_master():
-            mo = scf_tensors['C']
-            ea = scf_tensors['E']
+            mo = scf_tensors['C_alpha']
+            ea = scf_tensors['E_alpha']
         else:
             mo = None
             ea = None

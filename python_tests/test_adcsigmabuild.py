@@ -52,8 +52,8 @@ class TestAdcSigmaBuild(unittest.TestCase):
         # process MOs
 
         if task.mpi_rank == mpi_master():
-            mo = scf_tensors['C']
-            ea = scf_tensors['E']
+            mo = scf_tensors['C_alpha']
+            ea = scf_tensors['E_alpha']
         else:
             mo = None
             ea = None
@@ -94,7 +94,7 @@ class TestAdcSigmaBuild(unittest.TestCase):
         xA_ab, xB_ij = adc_drv.compute_xA_xB(epsilon, mo_indices, mo_integrals)
 
         if task.mpi_rank == mpi_master():
-            fa = scf_tensors['F'][0]
+            fa = scf_tensors['F_alpha']
             fmo = np.matmul(mo.T, np.matmul(fa, mo))
             fab = fmo[nocc:, nocc:]
             fij = fmo[:nocc, :nocc]

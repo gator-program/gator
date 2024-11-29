@@ -1,6 +1,7 @@
-name: test-env
+name: gator-test-env
 channels:
   - defaults
+  - veloxchem
   - gator
   - conda-forge
 dependencies:

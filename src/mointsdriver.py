@@ -105,7 +105,7 @@ class MOIntegralsDriver:
 
         if local_master:
             if global_master:
-                mo = scf_tensors['C']
+                mo = scf_tensors['C_alpha']
             else:
                 mo = None
             mo = cross_comm.bcast(mo, root=mpi_master())

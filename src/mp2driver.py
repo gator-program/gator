@@ -112,9 +112,10 @@ class Mp2Driver:
         """
 
         if self.rank == mpi_master():
-            mo = scf_tensors['C']
-            ea = scf_tensors['E']
-            mol_orbs = MolecularOrbitals([mo], [ea], molorb.rest)
+            mo = scf_tensors['C_alpha']
+            ea = scf_tensors['E_alpha']
+            occ_a = molecule.get_aufbau_alpha_occupation(ea.shape[0])
+            mol_orbs = MolecularOrbitals([mo], [ea], [occ_a], molorb.rest)
         else:
             mol_orbs = MolecularOrbitals()
 

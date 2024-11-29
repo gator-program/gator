@@ -86,8 +86,10 @@ class AdcMatrixDriver:
         moints_drv = MOIntegralsDriver(self.comm, self.ostream)
 
         if self.rank == mpi_master():
-            mo = scf_tensors['C']
-            ea = scf_tensors['E']
+            mo = scf_tensors['C_alpha']
+            ea = scf_tensors['E_alpha']
+
+            occ_a = molecule.get_aufbau_alpha_occupation(ea.shape[0])
 
             nocc = molecule.number_of_alpha_electrons()
             nvir = mo.shape[1] - nocc
@@ -113,7 +115,7 @@ class AdcMatrixDriver:
             d_dim = (nocc2 * (nocc2 - 1) // 2) * (nvir2 * (nvir2 - 1) // 2)
 
             # MO integrals
-            mol_orbs = MolecularOrbitals([mo], [ea], molorb.rest)
+            mol_orbs = MolecularOrbitals([mo], [ea], [occ_a], molorb.rest)
             phys_oovv = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OOVV')
             phys_ovov = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OVOV')
             phys_ooov = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OOOV')

@@ -3,7 +3,7 @@ task: scf
 @end
 
 @method settings
-basis: sto-3g
+basis: sto-3g-old
 @end
 
 @molecule

@@ -156,7 +156,7 @@ class AdcTwoDriver:
         # prepare orbital energies
 
         if self.rank == mpi_master():
-            ea = scf_tensors['E']
+            ea = scf_tensors['E_alpha']
         else:
             ea = None
         ea = self.comm.bcast(ea, root=mpi_master())
