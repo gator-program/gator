@@ -32,6 +32,7 @@ def main():
         scf_dict = {}
         if 'scf' in input_dict:
             scf_dict = dict(input_dict['scf'])
+            scf_dict['filename'] = input_dict['filename']
 
         if ('conv_thresh' not in scf_dict and
                 task_type in ['adc', 'mp2', 'adc2']):

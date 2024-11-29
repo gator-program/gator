@@ -1,14 +1,11 @@
 from mpi4py import MPI
 from veloxchem import assert_msg_critical
-from veloxchem import mpi_initialized
 from veloxchem import mpi_master
 import sys
 import os
 
 
 def mpi_sanity_check(argv):
-
-    assert_msg_critical(mpi_initialized(), "MPI: Initialized")
 
     if len(argv) <= 1 or argv[1] in ['-h', '--help']:
         info_txt = [

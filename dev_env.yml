@@ -1,7 +1,7 @@
 name: gator-test-env
 channels:
   - conda-forge
-  - veloxchem
+  - veloxchem/label/newints
   - gator
 dependencies:
   - adcc
@@ -12,4 +12,4 @@ dependencies:
   - psutil
   - pip
   - pip:
-    - git+https://github.com/gator-program/respondo.git
+    - git+https://github.com/gator-program/respondo.git@v0.0.5

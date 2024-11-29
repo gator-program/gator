@@ -1,17 +1,15 @@
 import numpy as np
 import time as tm
+import math
+
 from veloxchem import AODensityMatrix
-from veloxchem import AOFockMatrix
 from veloxchem import MolecularOrbitals
-from veloxchem import ElectronRepulsionIntegralsDriver
-from veloxchem import mpi_master
-from veloxchem import denmat
-from veloxchem.veloxchemlib import fockmat
-from veloxchem import molorb
+from veloxchem import FockDriver
+from veloxchem import T4CScreener
+from veloxchem import mpi_master, denmat, molorb
+from veloxchem import make_matrix, mat_t
 from veloxchem import MOIntegralsDriver
 from veloxchem import SubCommunicators
-from veloxchem import get_qq_scheme
-from veloxchem import get_qq_type
 from veloxchem import assert_msg_critical
 
 
@@ -29,7 +27,6 @@ class Mp2Driver:
         - comm: The MPI communicator.
         - rank: The MPI rank.
         - nodes: Number of MPI processes.
-        - qq_type: The electron repulsion integrals screening scheme.
         - eri_thresh: The electron repulsion integrals screening threshold.
         - batch_size: The number of Fock matrices in each batch.
         - comm_size: The size of each subcommunicator.
@@ -51,7 +48,6 @@ class Mp2Driver:
         self.nodes = self.comm.Get_size()
 
         # screening scheme and batch size for Fock build
-        self.qq_type = 'QQ_DEN'
         self.eri_thresh = 1.0e-12
         self.batch_size = 100
 
@@ -73,12 +69,6 @@ class Mp2Driver:
         :param scf_drv:
             The scf driver.
         """
-
-        if 'qq_type' in mp2_dict:
-            self.qq_type = mp2_dict['qq_type'].upper()
-        elif scf_drv is not None:
-            # inherit from SCF
-            self.qq_type = scf_drv.qq_type
 
         if 'eri_thresh' in mp2_dict:
             self.eri_thresh = float(mp2_dict['eri_thresh'])
@@ -149,8 +139,8 @@ class Mp2Driver:
             eab = evir.reshape(-1, 1) + evir
 
             self.e_mp2 = 0.0
-            oovv = moints_drv.compute_in_mem(molecule, ao_basis, mol_orbs,
-                                             "OOVV")
+            oovv = moints_drv.compute_in_memory(molecule, ao_basis, mol_orbs,
+                                                "phys_OOVV")
             for i in range(oovv.shape[0]):
                 for j in range(oovv.shape[1]):
                     ij = oovv[i, j, :, :]
@@ -193,15 +183,20 @@ class Mp2Driver:
 
         # screening data
 
-        eri_drv = ElectronRepulsionIntegralsDriver(local_comm)
-        screening = eri_drv.compute(get_qq_scheme(self.qq_type),
-                                    self.eri_thresh, molecule, basis)
+        fock_drv = FockDriver(local_comm)
+
+        if self.rank == mpi_master():
+            screening = T4CScreener()
+            screening.partition(basis, molecule, 'eri')
+        else:
+            screening = None
+        screening = self.comm.bcast(screening, root=mpi_master())
 
         # prepare MO integrals
 
         if local_master:
             e_mp2 = 0.0
-            mol_orbs.broadcast(cross_comm.Get_rank(), cross_comm)
+            mol_orbs = mol_orbs.broadcast(cross_comm, root=mpi_master())
             nocc = molecule.number_of_alpha_electrons()
 
             mo = mol_orbs.alpha_to_numpy()
@@ -256,19 +251,29 @@ class Mp2Driver:
             else:
                 dens = AODensityMatrix()
 
-            dens.broadcast(local_comm.Get_rank(), local_comm)
+            dens = dens.broadcast(local_comm, root=mpi_master())
 
-            fock = AOFockMatrix(dens)
-            for i in range(fock.number_of_fock_matrices()):
-                fock.set_fock_type(fockmat.rgenk, i)
+            fock = []
 
-            eri_drv.compute(fock, dens, molecule, basis, screening)
-            fock.reduce_sum(local_comm.Get_rank(), local_comm.Get_size(),
-                            local_comm)
+            fock_type = 'k'
+            thresh_int = int(-math.log10(self.eri_thresh))
+
+            for idx in range(dens.number_of_density_matrices()):
+                den_mat_for_fock = make_matrix(basis, mat_t.general)
+                den_mat_for_fock.set_values(dens.alpha_to_numpy(idx))
+
+                fock_mat = fock_drv.compute(screening, den_mat_for_fock, fock_type,
+                                            0.0, 0.0, thresh_int)
+
+                fock.append(fock_mat.to_numpy())
+                fock_mat = None
+
+            for idx in range(len(fock)):
+                fock[idx] = local_comm.reduce(fock[idx], root=mpi_master())
 
             if local_master:
                 for ind, (i, j) in enumerate(batch_ids):
-                    f_ao = fock.alpha_to_numpy(ind)
+                    f_ao = fock[ind]
                     f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                     eijab = orb_ene[i] + orb_ene[j] - eab
 
@@ -327,8 +332,6 @@ class Mp2Driver:
         cur_str += str(self.nodes // self.comm_size)
         self.ostream.print_header(cur_str.ljust(str_width))
 
-        cur_str = "ERI Screening Scheme         : " + get_qq_type(self.qq_type)
-        self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = "ERI Screening Threshold      : " + \
             "{:.1e}".format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))

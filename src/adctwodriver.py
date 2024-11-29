@@ -6,7 +6,6 @@ import math
 from veloxchem import BlockDavidsonSolver
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
-from veloxchem import get_qq_type
 
 from .mointsdriver import MOIntegralsDriver
 from .adconedriver import AdcOneDriver
@@ -50,7 +49,6 @@ class AdcTwoDriver:
 
         # ERI settings
         self.eri_thresh = 1.0e-15
-        self.qq_type = 'QQ_DEN'
 
         # solver setup
         self.conv_thresh = 1.0e-5
@@ -96,11 +94,6 @@ class AdcTwoDriver:
         elif scf_drv is not None:
             # inherit from SCF
             self.eri_thresh = scf_drv.eri_thresh
-        if 'qq_type' in settings:
-            self.qq_type = settings['qq_type'].upper()
-        elif scf_drv is not None:
-            # inherit from SCF
-            self.qq_type = scf_drv.qq_type
 
         if 'memory_profiling' in settings:
             key = settings['memory_profiling'].lower()
@@ -128,7 +121,6 @@ class AdcTwoDriver:
 
         moints_drv = MOIntegralsDriver(self.comm, self.ostream)
         moints_drv.update_settings({
-            'qq_type': self.qq_type,
             'eri_thresh': self.eri_thresh,
         })
         mo_indices, mo_integrals = moints_drv.compute(molecule, basis,
@@ -217,7 +209,6 @@ class AdcTwoDriver:
         adc_one_drv.update_settings({
             'nstates': self.nstates,
             'eri_thresh': self.eri_thresh,
-            'qq_type': self.qq_type
         })
         adc_one_results = adc_one_drv.compute(molecule, basis, scf_tensors,
                                               mo_indices, mo_integrals)
@@ -948,8 +939,6 @@ class AdcTwoDriver:
             "{:.1e}".format(self.conv_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))
 
-        cur_str = "ERI screening scheme      : " + get_qq_type(self.qq_type)
-        self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = "ERI Screening Threshold   : " + \
             "{:.1e}".format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))

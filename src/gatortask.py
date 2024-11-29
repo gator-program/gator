@@ -92,16 +92,15 @@ class GatorTask:
                                                  basis_path)
 
             self.ostream.print_block(self.molecule.get_string())
-            self.ostream.print_block(
-                self.ao_basis.get_string('Atomic Basis', self.molecule))
+            self.ostream.print_block(self.ao_basis.get_string('Atomic Basis'))
         else:
             self.molecule = Molecule()
             self.ao_basis = MolecularBasis()
             self.min_basis = MolecularBasis()
 
-        self.molecule.broadcast(self.mpi_rank, self.mpi_comm)
-        self.ao_basis.broadcast(self.mpi_rank, self.mpi_comm)
-        self.min_basis.broadcast(self.mpi_rank, self.mpi_comm)
+        self.molecule = self.mpi_comm.bcast(self.molecule, root=mpi_master())
+        self.ao_basis = self.mpi_comm.bcast(self.ao_basis, root=mpi_master())
+        self.min_basis = self.mpi_comm.bcast(self.min_basis, root=mpi_master())
 
     def finish(self):
         """

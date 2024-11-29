@@ -4,10 +4,9 @@ import time as tm
 import math
 
 from veloxchem import BlockDavidsonSolver
-from veloxchem import ElectricDipoleIntegralsDriver
 from veloxchem import mpi_master
 from veloxchem import hartree_in_ev
-from veloxchem import get_qq_type
+from veloxchem.oneeints import compute_electric_dipole_integrals
 
 from .gatortask import OutputStream
 from .mointsdriver import MOIntegralsDriver
@@ -49,7 +48,6 @@ class AdcOneDriver:
 
         # ERI settings
         self.eri_thresh = 1.0e-15
-        self.qq_type = 'QQ_DEN'
 
         # solver setup
         self.conv_thresh = 1.0e-4
@@ -94,11 +92,6 @@ class AdcOneDriver:
         elif scf_drv is not None:
             # inherit from SCF
             self.eri_thresh = scf_drv.eri_thresh
-        if 'qq_type' in settings:
-            self.qq_type = settings['qq_type'].upper()
-        elif scf_drv is not None:
-            # inherit from SCF
-            self.qq_type = scf_drv.qq_type
 
     def compute(self,
                 molecule,
@@ -183,7 +176,6 @@ class AdcOneDriver:
         if mo_indices is None or mo_integrals is None:
             moints_drv = MOIntegralsDriver(self.comm, self.ostream)
             moints_drv.update_settings({
-                'qq_type': self.qq_type,
                 'eri_thresh': self.eri_thresh
             })
             mo_indices, mo_integrals = moints_drv.compute(
@@ -362,20 +354,19 @@ class AdcOneDriver:
             The oscillator strengths.
         """
 
-        dipole_drv = ElectricDipoleIntegralsDriver(self.comm)
-        dipole_mats = dipole_drv.compute(molecule, basis)
+        dipole_mats = compute_electric_dipole_integrals(molecule, basis, [0.0,0.0,0.0])
+
+        dipole_ints = [
+            -1.0 * dipole_mats[0],
+            -1.0 * dipole_mats[1],
+            -1.0 * dipole_mats[2],
+        ]
 
         if self.rank == mpi_master():
             sqrt_2 = math.sqrt(2.0)
 
             nocc = mo_occ.shape[1]
             nvir = mo_vir.shape[1]
-
-            dipole_ints = [
-                dipole_mats.x_to_numpy(),
-                dipole_mats.y_to_numpy(),
-                dipole_mats.z_to_numpy(),
-            ]
 
             oscillator_strengths = []
 
@@ -417,8 +408,6 @@ class AdcOneDriver:
             "{:.1e}".format(self.conv_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))
 
-        cur_str = "ERI screening scheme      : " + get_qq_type(self.qq_type)
-        self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = "ERI Screening Threshold   : " + \
             "{:.1e}".format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))

@@ -1,8 +1,9 @@
+import numpy as np
+
 from veloxchem import mpi_master
 from veloxchem import molorb
 from veloxchem import MolecularOrbitals
 from veloxchem import MOIntegralsDriver
-import numpy as np
 
 
 class AdcMatrixDriver:
@@ -37,7 +38,6 @@ class AdcMatrixDriver:
 
         # ERI settings
         self.eri_thresh = 1.0e-15
-        self.qq_type = 'QQ_DEN'
 
         # mpi information
         self.comm = comm
@@ -63,11 +63,6 @@ class AdcMatrixDriver:
         elif scf_drv is not None:
             # inherit from SCF
             self.eri_thresh = scf_drv.eri_thresh
-        if 'qq_type' in settings:
-            self.qq_type = settings['qq_type'].upper()
-        elif scf_drv is not None:
-            # inherit from SCF
-            self.qq_type = scf_drv.qq_type
 
     def compute(self, molecule, basis, scf_tensors):
         """
@@ -116,10 +111,10 @@ class AdcMatrixDriver:
 
             # MO integrals
             mol_orbs = MolecularOrbitals([mo], [ea], [occ_a], molorb.rest)
-            phys_oovv = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OOVV')
-            phys_ovov = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OVOV')
-            phys_ooov = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OOOV')
-            phys_ovvv = moints_drv.compute_in_mem(molecule, basis, mol_orbs, 'OVVV')
+            phys_oovv = moints_drv.compute_in_memory(molecule, basis, mol_orbs, 'phys_OOVV')
+            phys_ovov = moints_drv.compute_in_memory(molecule, basis, mol_orbs, 'phys_OVOV')
+            phys_ooov = moints_drv.compute_in_memory(molecule, basis, mol_orbs, 'phys_OOOV')
+            phys_ovvv = moints_drv.compute_in_memory(molecule, basis, mol_orbs, 'phys_OVVV')
 
             #
             # single-single block

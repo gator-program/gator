@@ -81,7 +81,6 @@ class TestAdcSigmaBuild(unittest.TestCase):
 
         moints_drv = MOIntegralsDriver(comm, ostream)
         moints_drv.update_settings({
-            'qq_type': scf_drv.qq_type,
             'eri_thresh': scf_drv.eri_thresh
         })
         mo_indices, mo_integrals = moints_drv.compute(molecule, basis,

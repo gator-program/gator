@@ -1,14 +1,13 @@
 import numpy as np
 import time as tm
+import math
 
 from veloxchem import AODensityMatrix
-from veloxchem import AOFockMatrix
-from veloxchem import ElectronRepulsionIntegralsDriver
 from veloxchem import SubCommunicators
-from veloxchem import mpi_master
-from veloxchem import denmat
-from veloxchem.veloxchemlib import fockmat
-from veloxchem import get_qq_scheme
+from veloxchem import FockDriver
+from veloxchem import T4CScreener
+from veloxchem import mpi_master, denmat
+from veloxchem import make_matrix, mat_t
 
 
 class MOIntegralsDriver:
@@ -24,7 +23,6 @@ class MOIntegralsDriver:
         - comm: The MPI communicator.
         - rank: The MPI rank.
         - nodes: Number of MPI processes.
-        - qq_type: The electron repulsion integrals screening scheme.
         - eri_thresh: The electron repulsion integrals screening threshold.
         - batch_size: The number of Fock matrices in each batch.
         - ostream: The output stream.
@@ -44,7 +42,6 @@ class MOIntegralsDriver:
         self.ostream = ostream
 
         # screening scheme and batch size for Fock build
-        self.qq_type = 'QQ_DEN'
         self.eri_thresh = 1.0e-12
         self.batch_size = 100
 
@@ -56,8 +53,6 @@ class MOIntegralsDriver:
             The dictionary of MO integrals settings.
         """
 
-        if 'qq_type' in settings:
-            self.qq_type = settings['qq_type'].upper()
         if 'eri_thresh' in settings:
             self.eri_thresh = float(settings['eri_thresh'])
         if 'batch_size' in settings:
@@ -97,9 +92,14 @@ class MOIntegralsDriver:
 
         # screening data
 
-        eri_drv = ElectronRepulsionIntegralsDriver(local_comm)
-        screening = eri_drv.compute(get_qq_scheme(self.qq_type),
-                                    self.eri_thresh, molecule, basis)
+        fock_drv = FockDriver(local_comm)
+
+        if self.rank == mpi_master():
+            screening = T4CScreener()
+            screening.partition(basis, molecule, 'eri')
+        else:
+            screening = None
+        screening = self.comm.bcast(screening, root=mpi_master())
 
         # prepare molecular orbitals
 
@@ -156,24 +156,24 @@ class MOIntegralsDriver:
                 dens = self.form_densities(oo_indices, batch_ind, nocc, nocc,
                                            mo_occ, mo_occ, local_comm)
 
-                fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
-                                      screening, eri_drv, local_comm)
+                fock = self.comp_fock(dens, 'j', molecule, basis,
+                                      screening, fock_drv, local_comm)
 
                 if local_master:
-                    for i in range(fock.number_of_fock_matrices()):
-                        f_ao = fock.alpha_to_numpy(i)
+                    for i in range(len(fock)):
+                        f_ao = fock[i]
                         f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                         chem_oovv_J.append(f_vv)
                         pair = oo_indices[i + batch_ind * self.batch_size]
                         if pair[0] != pair[1]:
                             chem_oovv_J.append(f_vv.T)
 
-                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                      screening, eri_drv, local_comm)
+                fock = self.comp_fock(dens, 'k', molecule, basis,
+                                      screening, fock_drv, local_comm)
 
                 if local_master:
-                    for i in range(fock.number_of_fock_matrices()):
-                        f_ao = fock.alpha_to_numpy(i)
+                    for i in range(len(fock)):
+                        f_ao = fock[i]
                         f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                         f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
                         chem_ovov_K.append(f_vv)
@@ -245,12 +245,12 @@ class MOIntegralsDriver:
                 dens = self.form_densities(vv_indices, batch_ind, nvir, nvir,
                                            mo_vir, mo_vir, local_comm)
 
-                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                      screening, eri_drv, local_comm)
+                fock = self.comp_fock(dens, 'k', molecule, basis,
+                                      screening, fock_drv, local_comm)
 
                 if local_master:
-                    for i in range(fock.number_of_fock_matrices()):
-                        f_ao = fock.alpha_to_numpy(i)
+                    for i in range(len(fock)):
+                        f_ao = fock[i]
                         f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                         f_ov = np.linalg.multi_dot([mo_occ.T, f_ao, mo_vir])
                         chem_vovo_K.append(f_oo)
@@ -321,23 +321,23 @@ class MOIntegralsDriver:
                 dens = self.form_densities(ov_indices, batch_ind, nocc, nvir,
                                            mo_occ, mo_vir, local_comm)
 
-                fock = self.comp_fock(dens, fockmat.rgenj, molecule, basis,
-                                      screening, eri_drv, local_comm)
+                fock = self.comp_fock(dens, 'j', molecule, basis,
+                                      screening, fock_drv, local_comm)
 
                 if local_master:
-                    for i in range(fock.number_of_fock_matrices()):
-                        f_ao = fock.alpha_to_numpy(i)
+                    for i in range(len(fock)):
+                        f_ao = fock[i]
                         f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                         f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                         chem_ovoo_J.append(f_oo)
                         chem_ovvv_J.append(f_vv)
 
-                fock = self.comp_fock(dens, fockmat.rgenk, molecule, basis,
-                                      screening, eri_drv, local_comm)
+                fock = self.comp_fock(dens, 'k', molecule, basis,
+                                      screening, fock_drv, local_comm)
 
                 if local_master:
-                    for i in range(fock.number_of_fock_matrices()):
-                        f_ao = fock.alpha_to_numpy(i)
+                    for i in range(len(fock)):
+                        f_ao = fock[i]
                         f_oo = np.linalg.multi_dot([mo_occ.T, f_ao, mo_occ])
                         f_vv = np.linalg.multi_dot([mo_vir.T, f_ao, mo_vir])
                         chem_oovo_K.append(f_oo)
@@ -402,20 +402,29 @@ class MOIntegralsDriver:
         else:
             dens = AODensityMatrix()
 
-        dens.broadcast(local_comm.Get_rank(), local_comm)
+        dens = dens.broadcast(local_comm, root=mpi_master())
 
         return dens
 
-    def comp_fock(self, dens, fock_type, molecule, basis, screening, eri_drv,
+    def comp_fock(self, dens, fock_type, molecule, basis, screening, fock_drv,
                   local_comm):
 
-        fock = AOFockMatrix(dens)
-        for i in range(fock.number_of_fock_matrices()):
-            fock.set_fock_type(fock_type, i)
+        fock = []
 
-        eri_drv.compute(fock, dens, molecule, basis, screening)
-        fock.reduce_sum(local_comm.Get_rank(), local_comm.Get_size(),
-                        local_comm)
+        thresh_int = int(-math.log10(self.eri_thresh))
+
+        for idx in range(dens.number_of_density_matrices()):
+            den_mat_for_fock = make_matrix(basis, mat_t.general)
+            den_mat_for_fock.set_values(dens.alpha_to_numpy(idx))
+
+            fock_mat = fock_drv.compute(screening, den_mat_for_fock, fock_type,
+                                        0.0, 0.0, thresh_int)
+
+            fock.append(fock_mat.to_numpy())
+            fock_mat = None
+
+        for idx in range(len(fock)):
+            fock[idx] = local_comm.reduce(fock[idx], root=mpi_master())
 
         return fock
 
@@ -430,8 +439,6 @@ class MOIntegralsDriver:
         self.ostream.print_blank()
 
         str_width = 60
-        cur_str = 'ERI screening scheme        : {:s}'.format(self.qq_type)
-        self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = 'ERI Screening Threshold     : {:.1e}'.format(self.eri_thresh)
         self.ostream.print_header(cur_str.ljust(str_width))
         cur_str = 'Batch Size of Fock Matrices : {:d}'.format(self.batch_size)
