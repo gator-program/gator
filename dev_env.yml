@@ -1,14 +1,15 @@
 name: gator-test-env
 channels:
-  - defaults
+  - conda-forge
   - veloxchem
   - gator
-  - conda-forge
 dependencies:
   - adcc
   - numpy
   - pytest
   - veloxchem
-  - respondo
   - mpi4py
   - psutil
+  - pip
+  - pip:
+    - git+https://github.com/gator-program/respondo.git
