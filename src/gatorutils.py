@@ -41,7 +41,7 @@ def get_molecule(mol_string):
     else:
         mol = Molecule()
 
-    mol.broadcast(rank, comm)
+    mol = comm.bcast(mol, root=mpi_master())
 
     return mol
 
@@ -67,7 +67,7 @@ def get_molecular_basis(mol, basis_label):
     else:
         basis = MolecularBasis()
 
-    basis.broadcast(rank, comm)
+    basis = comm.bcast(basis, root=mpi_master())
 
     return basis
 
